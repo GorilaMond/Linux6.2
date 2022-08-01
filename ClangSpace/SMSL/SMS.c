@@ -8,6 +8,7 @@
 #define MAXNAME 20
 #define MAXSTU 12
 #define CODELEN 8
+#define MAXLEN  100
 #define ERROR -1
 #define OVER 1
 #define DATABASE ".SMSdata"
@@ -31,17 +32,13 @@ void insert(void);
 void delete (void);
 void update(void);
 void show();
+void help();
 int save(StuList *stul);
 StuList *getData();
 StuNode *searchCode(char *code, StuList *stul);
 void clearStuList(StuList *stul);
 StuNode *checkData(char *data);
-/*
-By inputing "insert" you can enter insert mode for inserting student information continuously.
-You should input student code and name splited by ",".
-The code must be CODELEN digits, and the name must be less than MAXNAME byte.
-If you want to exit insert mode, you should input ".".
-*/
+
 int main(void)
 {
     while (TRUE)
@@ -54,6 +51,8 @@ int main(void)
             printf("Bye!\n");
             return 0;
         }
+        else if (strcmp(command, "help") == 0)
+            help();
         else if (strcmp(command, "insert") == 0)
             insert();
         else if (strcmp(command, "delete") == 0)
@@ -65,6 +64,15 @@ int main(void)
         else
             printf("Illegal Input!");
     }
+}
+
+void help()
+{
+    FILE *file = fopen("README.txt", "r");
+    char line[MAXLEN + 1];
+    while(fgets(line, MAXLEN, file))
+        printf("%s\n", line);
+    fclose(file);
 }
 
 StuNode *createStuNode(void)
