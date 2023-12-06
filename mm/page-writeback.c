@@ -64,6 +64,7 @@
  * After a CPU has dirtied this many pages, balance_dirty_pages_ratelimited
  * will look to see if it needs to force writeback or throttling.
  */
+// cpu脏页门限，默认32
 static long ratelimit_pages = 32;
 
 /* The following parameters are exported via /proc/sys/vm */
@@ -99,6 +100,7 @@ static unsigned long vm_dirty_bytes;
 /*
  * The interval between `kupdate'-style writebacks
  */
+// 5s
 unsigned int dirty_writeback_interval = 5 * 100; /* centiseconds */
 
 EXPORT_SYMBOL_GPL(dirty_writeback_interval);
@@ -1514,6 +1516,14 @@ static void wb_bandwidth_estimate_start(struct bdi_writeback *wb)
  * If dirty_poll_interval is too low, big NUMA machines will call the expensive
  * global_zone_page_state() too often. So scale it near-sqrt to the safety margin
  * (the number of pages we may dirty without exceeding the dirty limits).
+ * 
+ * 如果阈值大于已脏化的页面数量，计算轮询间隔。
+ * 首先，使用ilog2函数获取（thresh - dirty）的二进制对数，
+ * 然后右移1位，最后将1左移得到最终的轮询间隔值。
+ * 这个计算过程是为了将轮询间隔与脏页数量的差异进行适当缩放，以更加合理地确定轮询的频率。
+ * 
+ * 总体而言，这段代码的目的是根据已脏化的页面数量和阈值来计算一个动态的轮询间隔，
+ * 避免频繁调用昂贵的global_zone_page_state()函数。
  */
 static unsigned long dirty_poll_interval(unsigned long dirty,
 					 unsigned long thresh)
@@ -1696,12 +1706,16 @@ static int balance_dirty_pages(struct bdi_writeback *wb,
 		unsigned long m_thresh = 0;
 		unsigned long m_bg_thresh = 0;
 
+		// 全局文件脏页
 		nr_reclaimable = global_node_page_state(NR_FILE_DIRTY);
 		gdtc->avail = global_dirtyable_memory();
+		// 全局文件脏页+正在回写
 		gdtc->dirty = nr_reclaimable + global_node_page_state(NR_WRITEBACK);
 
+		// 计算门限值
 		domain_dirty_limits(gdtc);
 
+		// 单独bdi回收
 		if (unlikely(strictlimit)) {
 			wb_dirty_limits(gdtc);
 
@@ -1709,6 +1723,7 @@ static int balance_dirty_pages(struct bdi_writeback *wb,
 			thresh = gdtc->wb_thresh;
 			bg_thresh = gdtc->wb_bg_thresh;
 		} else {
+		// 全局回收 
 			dirty = gdtc->dirty;
 			thresh = gdtc->thresh;
 			bg_thresh = gdtc->bg_thresh;
@@ -1745,7 +1760,9 @@ static int balance_dirty_pages(struct bdi_writeback *wb,
 		 * before starting background writeout, and then write out all
 		 * the way down to the lower threshold.  So slow writers cause
 		 * minimal disk activity.
-		 *
+		 * 在笔记本模式下，我们需要等待达到较高的阈值后才开始进行后台写入操作，
+		 * 并持续写入直至达到较低的阈值。因此，由于写入速度较慢，从而使得磁盘活动最小化。
+		 * 
 		 * In normal mode, we start background writeout at the lower
 		 * background_thresh, to keep the amount of dirty memory low.
 		 */
@@ -1765,6 +1782,7 @@ static int balance_dirty_pages(struct bdi_writeback *wb,
 		 * If memcg domain is in effect, @dirty should be under
 		 * both global and memcg freerun ceilings.
 		 */
+		// 小于直接回收文件和背景回收的门限, 不占用本线程时间；否则说明背景回收没有运行，需要占用本线程时间
 		if (dirty <= dirty_freerun_ceiling(thresh, bg_thresh) &&
 		    (!mdtc ||
 		     m_dirty <= dirty_freerun_ceiling(m_thresh, m_bg_thresh))) {
@@ -1776,14 +1794,17 @@ free_running:
 			m_intv = ULONG_MAX;
 
 			current->dirty_paused_when = now;
+			// 脏页数量置零
 			current->nr_dirtied = 0;
 			if (mdtc)
 				m_intv = dirty_poll_interval(m_dirty, m_thresh);
+			// 重新设置线程脏页门限
 			current->nr_dirtied_pause = min(intv, m_intv);
 			break;
 		}
 
 		/* Start writeback even when in laptop mode */
+		// 唤醒真正的回写线程
 		if (unlikely(!writeback_in_progress(wb)))
 			wb_start_background_writeback(wb);
 
@@ -1807,9 +1828,12 @@ free_running:
 				goto free_running;
 		}
 
+		// 如果是单个bdi独自回收，当前bdi的 脏页超过门限即回收；
+		// 如果是整个系统回收，当前bdi超过门限且系统的脏页也要超超过门限;
 		dirty_exceeded = (gdtc->wb_dirty > gdtc->wb_thresh) &&
 			((gdtc->dirty > gdtc->thresh) || strictlimit);
 
+		// 用于缩放速率限制
 		wb_position_ratio(gdtc);
 		sdtc = gdtc;
 
@@ -1922,6 +1946,7 @@ pause:
 		}
 		__set_current_state(TASK_KILLABLE);
 		wb->dirty_sleep = now;
+		// 等待io，让渡cpu资源给wb回写线程，最大不超过200ms
 		io_schedule_timeout(pause);
 
 		current->dirty_paused_when = now + pause;
@@ -1954,6 +1979,7 @@ pause:
 	return ret;
 }
 
+// 当前CPU的脏页数
 static DEFINE_PER_CPU(int, bdp_ratelimits);
 
 /*
@@ -1970,6 +1996,7 @@ static DEFINE_PER_CPU(int, bdp_ratelimits);
  * as the new task will pick up and accumulate the old task's leaked dirty
  * count and eventually get throttled.
  */
+// 线程退出时未达到门限的脏页将随机分配给正在运行的线程，数据积累在该变量中
 DEFINE_PER_CPU(int, dirty_throttle_leaks) = 0;
 
 /**
@@ -2007,7 +2034,9 @@ int balance_dirty_pages_ratelimited_flags(struct address_space *mapping,
 	if (!wb)
 		wb = &bdi->wb;
 
+	// 当前task的脏页门限
 	ratelimit = current->nr_dirtied_pause;
+	// 全局的脏页数超过门限或者该bdi的脏页数超过门限
 	if (wb->dirty_exceeded)
 		ratelimit = min(ratelimit, 32 >> (PAGE_SHIFT - 10));
 
@@ -2018,9 +2047,15 @@ int balance_dirty_pages_ratelimited_flags(struct address_space *mapping,
 	 * 1000+ tasks, all of them start dirtying pages at exactly the same
 	 * time, hence all honoured too large initial task->nr_dirtied_pause.
 	 */
+	// 当前CPU的脏页数
 	p =  this_cpu_ptr(&bdp_ratelimits);
+	// 如果当前线程脏页数超过门限值，则肯定会触发下面的回收流程。
+	// 同时重新计算当前CPU的脏页数
 	if (unlikely(current->nr_dirtied >= ratelimit))
 		*p = 0;
+	// 当前线程的脏页数未超过门限值，
+	// 但是当前CPU的脏页数超过CPU脏页门限值，则设置门限为0，肯定会触发回收。
+	// 同时重新计算当前CPU的脏页数 
 	else if (unlikely(*p >= ratelimit_pages)) {
 		*p = 0;
 		ratelimit = 0;
@@ -2030,6 +2065,7 @@ int balance_dirty_pages_ratelimited_flags(struct address_space *mapping,
 	 * short-lived tasks (eg. gcc invocations in a kernel build) escaping
 	 * the dirty throttling and livelock other long-run dirtiers.
 	 */
+	// 退出进程遗留脏页数量
 	p = this_cpu_ptr(&dirty_throttle_leaks);
 	if (*p > 0 && current->nr_dirtied < ratelimit) {
 		unsigned long nr_pages_dirtied;
@@ -2039,9 +2075,12 @@ int balance_dirty_pages_ratelimited_flags(struct address_space *mapping,
 	}
 	preempt_enable();
 
+	// 当前线程脏页超过门限值
 	if (unlikely(current->nr_dirtied >= ratelimit))
+		// 开始刷盘
 		ret = balance_dirty_pages(wb, current->nr_dirtied, flags);
 
+	// 减少wb的引用计数
 	wb_put(wb);
 	return ret;
 }

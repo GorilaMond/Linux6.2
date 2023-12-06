@@ -1702,7 +1702,7 @@ static inline void mem_cgroup_flush_foreign(struct bdi_writeback *wb)
 {
 }
 
-#endif	/* CONFIG_CGROUP_WRITEBACK */
+#endif	/* CONFIG_CGROUP_WRITEBACK cgroup buffered I/O 限速*/
 
 struct sock;
 bool mem_cgroup_charge_skmem(struct mem_cgroup *memcg, unsigned int nr_pages,

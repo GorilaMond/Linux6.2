@@ -503,6 +503,7 @@ static void ext4_map_blocks_es_recheck(handle_t *handle,
  *
  * It returns the error in case of allocation failure.
  */
+// 查找请求的块，并在块已经映射时返回。
 int ext4_map_blocks(handle_t *handle, struct inode *inode,
 		    struct ext4_map_blocks *map, int flags)
 {
@@ -2336,6 +2337,7 @@ out:
  * mapped, we update @map to the next extent in the last page that needs
  * mapping. Otherwise we submit the page for IO.
  */
+// 更新物理extent和buffer的状态：delay和unwritten
 static int mpage_map_and_submit_buffers(struct mpage_da_data *mpd)
 {
 	struct folio_batch fbatch;
@@ -2454,6 +2456,7 @@ static int mpage_map_one_extent(handle_t *handle, struct mpage_da_data *mpd)
  * mapped so that it can be written out (and thus forward progress is
  * guaranteed). After mapping we submit all mapped pages for IO.
  */
+// 将上面准备的连续的逻辑extent映射磁盘物理块号
 static int mpage_map_and_submit_extent(handle_t *handle,
 				       struct mpage_da_data *mpd,
 				       bool *give_up_on_write)
@@ -2510,6 +2513,7 @@ static int mpage_map_and_submit_extent(handle_t *handle,
 		 * Update buffer state, submit mapped pages, and get us new
 		 * extent to map
 		 */
+		// 更新物理extent和buffer的状态：delay和unwritten
 		err = mpage_map_and_submit_buffers(mpd);
 		if (err < 0)
 			goto update_disksize;
@@ -2682,6 +2686,7 @@ static int mpage_prepare_extent_to_map(struct mpage_da_data *mpd)
 			 */
 			if (!mpd->can_map) {
 				if (ext4_page_nomap_can_writeout(page)) {
+					// 提交io请求
 					err = mpage_submit_page(mpd, page);
 					if (err < 0)
 						goto out;
@@ -2807,6 +2812,7 @@ static int ext4_do_writepages(struct mpage_da_data *mpd)
 		mpd->last_page = wbc->range_end >> PAGE_SHIFT;
 	}
 
+	// 初始化io请求
 	ext4_io_submit_init(&mpd->io_submit, wbc);
 retry:
 	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
@@ -2827,10 +2833,11 @@ retry:
 		ret = -ENOMEM;
 		goto unplug;
 	}
+	// 找到连续的还未在磁盘上建立块映射的脏页，把它们加入 extent
 	ret = mpage_prepare_extent_to_map(mpd);
 	/* Unlock pages we didn't use */
 	mpage_release_unused_pages(mpd, false);
-	/* Submit prepared bio */
+	/* Submit prepared bio 提交io请求 */
 	ext4_io_submit(&mpd->io_submit);
 	ext4_put_io_end_defer(mpd->io_submit.io_end);
 	mpd->io_submit.io_end = NULL;
@@ -2874,6 +2881,7 @@ retry:
 		trace_ext4_da_write_pages(inode, mpd->first_page, wbc);
 		ret = mpage_prepare_extent_to_map(mpd);
 		if (!ret && mpd->map.m_len)
+			// 映射和提交这些脏页
 			ret = mpage_map_and_submit_extent(handle, mpd,
 					&give_up_on_write);
 		/*
@@ -2893,7 +2901,7 @@ retry:
 		}
 		/* Unlock pages we didn't use */
 		mpage_release_unused_pages(mpd, give_up_on_write);
-		/* Submit prepared bio */
+		/* Submit prepared bio 写入io请求*/
 		ext4_io_submit(&mpd->io_submit);
 
 		/*
@@ -3071,6 +3079,7 @@ static int ext4_da_write_begin(struct file *file, struct address_space *mapping,
 	}
 
 retry:
+	// 获取页高速缓存
 	page = grab_cache_page_write_begin(mapping, index);
 	if (!page)
 		return -ENOMEM;

@@ -12,6 +12,7 @@
 
 #define RWBS_LEN	8
 
+//通用跟踪点原型
 DECLARE_EVENT_CLASS(block_buffer,
 
 	TP_PROTO(struct buffer_head *bh),

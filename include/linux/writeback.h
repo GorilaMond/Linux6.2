@@ -30,7 +30,9 @@ struct backing_dev_info;
  * fs/fs-writeback.c
  */
 enum writeback_sync_modes {
+	// 不需要等待数据真正落盘返回
 	WB_SYNC_NONE,	/* Don't wait on anything */
+	// 需要等待数据落盘完成返回，sync调用使用
 	WB_SYNC_ALL,	/* Wait on every mapping */
 };
 
@@ -39,6 +41,7 @@ enum writeback_sync_modes {
  * always on the stack, and hence need no locking.  They are always initialised
  * in a manner such that unspecified fields are set to zero.
  */
+// 回写控制
 struct writeback_control {
 	long nr_to_write;		/* Write this many pages, and decrement
 					   this for each page written */
@@ -52,6 +55,7 @@ struct writeback_control {
 	loff_t range_start;
 	loff_t range_end;
 
+	// 同步机制
 	enum writeback_sync_modes sync_mode;
 
 	unsigned for_kupdate:1;		/* A kupdate writeback */

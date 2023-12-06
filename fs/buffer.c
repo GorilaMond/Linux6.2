@@ -1076,6 +1076,8 @@ __getblk_slow(struct block_device *bdev, sector_t block,
  * mark_buffer_dirty() is atomic.  It takes bh->b_page->mapping->private_lock,
  * i_pages lock and mapping->host->i_lock.
  */
+// 将buffer标记为需要写，一条延迟写的调用链
+// generic_write_end -> __block_commit_write -> mark_buffer_dirty
 void mark_buffer_dirty(struct buffer_head *bh)
 {
 	WARN_ON_ONCE(!buffer_uptodate(bh));
@@ -2702,6 +2704,7 @@ static void submit_bh_wbc(blk_opf_t opf, struct buffer_head *bh,
 	submit_bio(bio);
 }
 
+// 提交写buffer请求
 void submit_bh(blk_opf_t opf, struct buffer_head *bh)
 {
 	submit_bh_wbc(opf, bh, NULL);

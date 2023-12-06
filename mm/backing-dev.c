@@ -358,6 +358,8 @@ static __init int bdi_class_init(void)
 }
 postcore_initcall(bdi_class_init);
 
+
+// 在内核启动的时候，系统会使用alloc_workqueue函数申请一个用于回写的工作队列
 static int __init default_bdi_init(void)
 {
 	bdi_wq = alloc_workqueue("writeback", WQ_MEM_RECLAIM | WQ_UNBOUND |
@@ -382,6 +384,13 @@ subsys_initcall(default_bdi_init);
  * We have to be careful not to postpone flush work if it is scheduled for
  * earlier. Thus we use queue_delayed_work().
  */
+// 定时唤醒
+// __mark_inode_dirty：
+	// 当给一个 inode 标记为脏时，如果脏的不仅仅是时间戳，而且当前的 b_dirty 链表是空的
+	// 也就是说第一次将脏页挂在 b_dirty 链表时，开启定时唤醒
+// wb_workfn：当回写线程处理完 work_list 上的所有任务后，
+	// 如果仍有脏 inode 在 b_{dirty|io|more_io} 上时，开启定时唤醒
+// 简单的讲，就是只要存在脏 inode 在 b_{dirty|io|more_io} 上时，内核的回写线程每 5s 内肯定会被唤醒一次
 void wb_wakeup_delayed(struct bdi_writeback *wb)
 {
 	unsigned long timeout;
@@ -430,6 +439,7 @@ static int wb_init(struct bdi_writeback *wb, struct backing_dev_info *bdi,
 
 	spin_lock_init(&wb->work_lock);
 	INIT_LIST_HEAD(&wb->work_list);
+	// 注册实际的工作函数
 	INIT_DELAYED_WORK(&wb->dwork, wb_workfn);
 	INIT_DELAYED_WORK(&wb->bw_dwork, wb_update_bandwidth_workfn);
 	wb->dirty_sleep = jiffies;
@@ -458,6 +468,7 @@ static void cgwb_remove_from_bdi_list(struct bdi_writeback *wb);
 /*
  * Remove bdi from the global list and shutdown any threads we have running
  */
+// 当需要对整个backing_dev_info结构释放时，也会立即唤醒内核回写线程，下刷所有工作
 static void wb_shutdown(struct bdi_writeback *wb)
 {
 	/* Make sure nobody queues further work */
@@ -901,6 +912,7 @@ static void cgwb_remove_from_bdi_list(struct bdi_writeback *wb)
 
 #endif	/* CONFIG_CGROUP_WRITEBACK */
 
+// 初始化bdi，该结构体包含了块设备信息，代表一个设备。
 int bdi_init(struct backing_dev_info *bdi)
 {
 	bdi->dev = NULL;
@@ -913,6 +925,7 @@ int bdi_init(struct backing_dev_info *bdi)
 	INIT_LIST_HEAD(&bdi->wb_list);
 	init_waitqueue_head(&bdi->wb_waitq);
 
+	// 初始化wb
 	return cgwb_bdi_init(bdi);
 }
 

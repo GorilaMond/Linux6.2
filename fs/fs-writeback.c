@@ -39,14 +39,27 @@
 /*
  * Passed into wb_writeback(), essentially a subset of writeback_control
  */
+// 用于描述一次回写任务的相关参数
 struct wb_writeback_work {
+	// 本次回写的页面数限制
 	long nr_pages;
+	// 回写的文件系统的超级块，文件系统的控制块
 	struct super_block *sb;
+	// 回写的模式
+	// WB_SYNC_NONE：绝大部分回写任务的配置，不会等待回写真正落盘，下发写命令后就返回
+	// WB_SYNC_ALL：sync 系统调用时配置，必须等待回调函数执行完成，写的数据真正落盘之后才会返回
 	enum writeback_sync_modes sync_mode;
+	// tag-and-write 机制标记，用于避免活锁
 	unsigned int tagged_writepages:1;
+	// 定期回写标记，值为 1 表示当前任务是定期回写任务，用于回写已经至脏超过指定时间（内核中当前配置为 30s）的脏页。
 	unsigned int for_kupdate:1;
+	// 继续上次循环回写标记，
+	// 值为 1 表示当前任务的回写范围为整个 inode，并且从上次完成的位置作为起始位置进行循环回写。
+	// 值为 0 则根据 struct writeback_control wbc 的 range_start 以及 range_end 作为回写的范围。
 	unsigned int range_cyclic:1;
+	// 阈值回写标记，值为 1 表示当前任务是阈值回写任务，当脏页比例超过阈值后才会触发。
 	unsigned int for_background:1;
+	// sync系统调用标记
 	unsigned int for_sync:1;	/* sync(2) WB_SYNC_ALL writeback */
 	unsigned int auto_free:1;	/* free on completion */
 	enum wb_reason reason;		/* why was writeback initiated? */
@@ -133,6 +146,7 @@ static bool inode_io_list_move_locked(struct inode *inode,
 	return false;
 }
 
+// 修改延时为 0，直接唤醒回写线程
 static void wb_wakeup(struct bdi_writeback *wb)
 {
 	spin_lock_irq(&wb->work_lock);
@@ -157,6 +171,7 @@ static void finish_writeback_work(struct bdi_writeback *wb,
 	}
 }
 
+// 将一个回写任务插入到队列尾部，然后修改延时为 0，立即唤醒回写线程
 static void wb_queue_work(struct bdi_writeback *wb,
 			  struct wb_writeback_work *work)
 {

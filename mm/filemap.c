@@ -3733,6 +3733,7 @@ out:
 }
 EXPORT_SYMBOL(generic_file_direct_write);
 
+// 写入page cache
 ssize_t generic_perform_write(struct kiocb *iocb, struct iov_iter *i)
 {
 	struct file *file = iocb->ki_filp;
@@ -3770,6 +3771,9 @@ again:
 			break;
 		}
 
+		// 写入前的处理，由底层文件系统实现，主要处理需要申请的额外存储空间，
+		// 以及从后端存储（磁盘或网络）读取不在缓存中的page数据。返回locked的page到page
+		// 例如 ext4_da_write_begin
 		status = a_ops->write_begin(file, mapping, pos, bytes,
 						&page, &fsdata);
 		if (unlikely(status < 0))
@@ -3778,9 +3782,12 @@ again:
 		if (mapping_writably_mapped(mapping))
 			flush_dcache_page(page);
 
+		// 从用户空间拷贝数据到返回的page里
 		copied = copy_page_from_iter_atomic(page, offset, bytes, i);
 		flush_dcache_page(page);
 
+		// 通过调用底层文件系统的实现，将page设置为dirty并unlock
+		// 例如 ext4_da_write_end
 		status = a_ops->write_end(file, mapping, pos, bytes, copied,
 						page, fsdata);
 		if (unlikely(status != copied)) {
@@ -3804,10 +3811,35 @@ again:
 		pos += status;
 		written += status;
 
+		// 将脏页挂入回写队列，并平衡内存中的脏页，需要时将脏页刷盘
 		balance_dirty_pages_ratelimited(mapping);
 	} while (iov_iter_count(i));
 
 	return written ? written : status;
+
+	// 后续由bdi_writeback机制负责脏页的数据刷盘回写，例如
+		// submit_bio
+		// ext4_do_writepages
+		// ext4_writepages
+		// do_writepages
+		// __writeback_single_inode
+		// writeback_sb_inodes
+		// __writeback_inodes_wb
+		// wb_writeback
+		// wb_do_writeback
+		// wb_workfn
+		// process_one_work
+		// worker_thread
+		// kthread
+		// ret_from_fork
+	// 或
+		// submit_bio
+		// submit_bh
+		// journal_submit_commit_record
+		// jbd2_journal_commit_transaction
+		// kjournald2
+		// kthread
+		// ret_from_fork
 }
 EXPORT_SYMBOL(generic_perform_write);
 

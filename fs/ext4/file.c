@@ -267,6 +267,7 @@ static ssize_t ext4_write_checks(struct kiocb *iocb, struct iov_iter *from)
 	return count;
 }
 
+// ext4延迟写实现
 static ssize_t ext4_buffered_write_iter(struct kiocb *iocb,
 					struct iov_iter *from)
 {
@@ -282,6 +283,7 @@ static ssize_t ext4_buffered_write_iter(struct kiocb *iocb,
 		goto out;
 
 	current->backing_dev_info = inode_to_bdi(inode);
+	// 写入page cache
 	ret = generic_perform_write(iocb, from);
 	current->backing_dev_info = NULL;
 
@@ -567,6 +569,7 @@ static ssize_t ext4_dio_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		inode_dio_wait(inode);
 
 	if (extend) {
+		// 启用日志handle
 		handle = ext4_journal_start(inode, EXT4_HT_INODE, 2);
 		if (IS_ERR(handle)) {
 			ret = PTR_ERR(handle);
@@ -579,11 +582,14 @@ static ssize_t ext4_dio_write_iter(struct kiocb *iocb, struct iov_iter *from)
 			goto out;
 		}
 
+		// 结束这个handle原子操作
 		ext4_journal_stop(handle);
 	}
 
 	if (ilock_shared)
 		iomap_ops = &ext4_iomap_overwrite_ops;
+	// 该函数仍通过传统存储栈（Storage Stack）访问设备，即通过构造 bio，
+	// 将请求传递到块设备层（Block Device Layer），再由块设备层调用驱动从而访问设备
 	ret = iomap_dio_rw(iocb, from, iomap_ops, &ext4_dio_write_ops,
 			   (unaligned_io || extend) ? IOMAP_DIO_FORCE_WAIT : 0,
 			   NULL, 0);
@@ -695,8 +701,10 @@ ext4_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		return ext4_dax_write_iter(iocb, from);
 #endif
 	if (iocb->ki_flags & IOCB_DIRECT)
+		// 写穿
 		return ext4_dio_write_iter(iocb, from);
 	else
+		// 延迟写
 		return ext4_buffered_write_iter(iocb, from);
 }
 

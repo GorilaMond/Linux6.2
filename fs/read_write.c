@@ -478,9 +478,12 @@ ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 	return ret;
 }
 
+// 主要生成struct kiocb，将其提交给f_op->aio_write()函数，并等待该kiocb的完成
 static ssize_t new_sync_write(struct file *filp, const char __user *buf, size_t len, loff_t *ppos)
 {
+	// 写入位置
 	struct kiocb kiocb;
+	// 写入内容
 	struct iov_iter iter;
 	ssize_t ret;
 
@@ -488,6 +491,7 @@ static ssize_t new_sync_write(struct file *filp, const char __user *buf, size_t 
 	kiocb.ki_pos = (ppos ? *ppos : 0);
 	iov_iter_ubuf(&iter, ITER_SOURCE, (void __user *)buf, len);
 
+	// 调用filp->f_op->write_iter(kio, iter)，例如 ext4_file_write_iter
 	ret = call_write_iter(filp, &kiocb, &iter);
 	BUG_ON(ret == -EIOCBQUEUED);
 	if (ret > 0 && ppos)
@@ -572,12 +576,14 @@ ssize_t vfs_write(struct file *file, const char __user *buf, size_t count, loff_
 	if (unlikely(!access_ok(buf, count)))
 		return -EFAULT;
 
+	// 检查pos和count对应的区域是否可以写入（如是否获取写锁等）
 	ret = rw_verify_area(WRITE, file, pos, count);
 	if (ret)
 		return ret;
 	if (count > MAX_RW_COUNT)
 		count =  MAX_RW_COUNT;
 	file_start_write(file);
+	// 如果底层文件系统指定了struct file_operations里的write()或write_iter函数
 	if (file->f_op->write)
 		ret = file->f_op->write(file, buf, count, pos);
 	else if (file->f_op->write_iter)
@@ -623,6 +629,7 @@ SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 	return ksys_read(fd, buf, count);
 }
 
+// 获取struct fd引用计数和pos锁定，获取pos并主要通过调用vfs_write()实现数据写入
 ssize_t ksys_write(unsigned int fd, const char __user *buf, size_t count)
 {
 	struct fd f = fdget_pos(fd);
@@ -643,6 +650,7 @@ ssize_t ksys_write(unsigned int fd, const char __user *buf, size_t count)
 	return ret;
 }
 
+// 用户态写入接口
 SYSCALL_DEFINE3(write, unsigned int, fd, const char __user *, buf,
 		size_t, count)
 {

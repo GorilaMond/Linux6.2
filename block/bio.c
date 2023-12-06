@@ -1123,7 +1123,7 @@ void __bio_add_page(struct bio *bio, struct page *page,
 EXPORT_SYMBOL_GPL(__bio_add_page);
 
 /**
- *	bio_add_page	-	attempt to add page(s) to bio
+ *	bio_add_page	-	attempt to add page(s) to bio 向bio中添加一个或多个页面
  *	@bio: destination bio
  *	@page: start page to add
  *	@len: vec entry length, may cross pages

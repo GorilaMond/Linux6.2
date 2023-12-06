@@ -407,6 +407,7 @@ static void io_submit_init_bio(struct ext4_io_submit *io,
 	wbc_init_bio(io->io_wbc, bio);
 }
 
+// 向bio中添加写buffer请求
 static void io_submit_add_bh(struct ext4_io_submit *io,
 			     struct inode *inode,
 			     struct page *page,
@@ -421,6 +422,7 @@ submit_and_retry:
 	}
 	if (io->io_bio == NULL)
 		io_submit_init_bio(io, bh);
+	// 将页面添加到块io请求中
 	ret = bio_add_page(io->io_bio, page, bh->b_size, bh_offset(bh));
 	if (ret != bh->b_size)
 		goto submit_and_retry;

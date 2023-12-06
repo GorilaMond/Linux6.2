@@ -77,7 +77,7 @@ enum mq_rq_state {
 
 /*
  * Try to put the fields that are referenced together in the same cacheline.
- *
+ * 磁盘请求结构体
  * If you modify this structure, make sure to update blk_rq_init() and
  * especially blk_mq_rq_ctx_init() to take care of the added fields.
  */

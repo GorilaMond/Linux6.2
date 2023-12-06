@@ -102,16 +102,23 @@ struct wb_completion {
  * Each bdi_writeback that is not embedded into the backing_dev_info must hold
  * a reference to the parent backing_dev_info.  See cgwb_create() for details.
  */
+// 用于管理一个块设备的回写，同时支持 cgroup 进行限制
 struct bdi_writeback {
 	struct backing_dev_info *bdi;	/* our parent bdi */
 
 	unsigned long state;		/* Always use atomic bitops on this */
+	// 上次刷写数据的时间，用于周期性回写数据
 	unsigned long last_old_flush;	/* last old data flush */
 
+	// 暂存所有的dirty inode，mark_inode_dirty会加入到这个list
 	struct list_head b_dirty;	/* dirty inodes */
+	// 用于暂存即将要被writeback处理的inode
 	struct list_head b_io;		/* parked for writeback */
+	// 暂存由于一次回写数量限制原因导致的等待下次回写的inode链表
 	struct list_head b_more_io;	/* parked for more writeback */
+	// 暂存仅仅是时间戳更新而被标记为脏的inode链表
 	struct list_head b_dirty_time;	/* time stamps are dirty */
+	// 保护上述四个链表的自旋锁
 	spinlock_t list_lock;		/* protects the b_* lists */
 
 	atomic_t writeback_inodes;	/* number of inodes under writeback */
@@ -136,8 +143,11 @@ struct bdi_writeback {
 	int dirty_exceeded;
 	enum wb_reason start_all_reason;
 
+	// 为了保护 work_list 以及 dwork 调度的自旋锁
 	spinlock_t work_lock;		/* protects work_list & dwork scheduling */
+	// wb_writeback_work 任务列表，暂存所有需要回写的任务的链表
 	struct list_head work_list;
+	// 用于 page cache 回写机制的 work 关键结构体
 	struct delayed_work dwork;	/* work item used for writeback */
 	struct delayed_work bw_dwork;	/* work item used for bandwidth estimate */
 
@@ -162,6 +172,7 @@ struct bdi_writeback {
 #endif
 };
 
+// 描述一个块设备
 struct backing_dev_info {
 	u64 id;
 	struct rb_node rb_node; /* keyed by ->id */
