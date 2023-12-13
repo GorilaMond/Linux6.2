@@ -421,7 +421,13 @@ extern const struct address_space_operations empty_aops;
  * @private_list: For use by the owner of the address_space.
  * @private_data: For use by the owner of the address_space.
  */
+// page cache用于在内存中缓存磁盘文件，几乎所有文件的读写都依赖于page cache，
+// 除非使用直接IO的方式。它是文件系统cache中占比最大的部分，也是对文件系统读写性能提升最大的部分，
+// 而地址空间address_space则是page cache的核心管理结构。
+// page cache的创建一般发生在应用程序读取文件时，会在内存中查找缓存，如果找到就直接返回，
+// 没找到就会创建一个缓存页，然后从磁盘中读取该文件填充该缓存页。
 struct address_space {
+	// pagecache的所有者，inode或者block device
 	struct inode		*host;
 	struct xarray		i_pages;
 	struct rw_semaphore	invalidate_lock;
@@ -433,13 +439,16 @@ struct address_space {
 #endif
 	struct rb_root_cached	i_mmap;
 	struct rw_semaphore	i_mmap_rwsem;
+	// 包含的页面数量
 	unsigned long		nrpages;
 	pgoff_t			writeback_index;
 	const struct address_space_operations *a_ops;
 	unsigned long		flags;
 	errseq_t		wb_err;
 	spinlock_t		private_lock;
+	// 一般用来放metadata buffer，但ext4不使用该变量
 	struct list_head	private_list;
+	// 同上
 	void			*private_data;
 } __attribute__((aligned(sizeof(long)))) __randomize_layout;
 	/*
@@ -590,6 +599,8 @@ struct fsnotify_mark_connector;
  * the RCU path lookup and 'stat' data) fields at the beginning
  * of the 'struct inode'
  */
+// 用一个inode节点对象描述一个要操作的文件/设备文件, 包括权限，设备号等信息. 
+// 就是描述一个要操作的文件的属性. 一个文件可以打开很多次， 但都是共用一个inode对象来描述属性的. 
 struct inode {
 	umode_t			i_mode;
 	unsigned short		i_opflags;
@@ -623,6 +634,7 @@ struct inode {
 		const unsigned int i_nlink;
 		unsigned int __i_nlink;
 	};
+	// 设备文件对应的设备号, 驱动里即可通过区分次设备号来区别不同的具体硬件
 	dev_t			i_rdev;
 	loff_t			i_size;
 	struct timespec64	i_atime;
@@ -937,6 +949,13 @@ static inline int ra_has_index(struct file_ra_state *ra, pgoff_t index)
 		index <  ra->start + ra->size);
 }
 
+// 文件描述符属于一个进程的资源,不同进程里有可能相同的文件描述符.
+// 在用户进程里用一个int类型来表示文件描述符.但文件描述符里有还存有对文件位置的偏移，
+// 打开标志等信息, 用一个int数无法记录下来的，
+// 所在每个文件描述符的信息都是由内核里用file对象描述文件描述符, 在文件打开时创建, 关闭时销毁
+// 如果打开设备文件，那么得到的file对象：
+//		file对象里的成员f_path.dentry->d_inode->i_rdev可以获取到设备文件的设备号
+// 		file对象里的成员f_path.dentry->d_inode可以获取到设备文件的inode对象的地址
 struct file {
 	union {
 		struct llist_node	f_llist;
@@ -945,6 +964,7 @@ struct file {
 	};
 	struct path		f_path;
 	struct inode		*f_inode;	/* cached value */
+	// 对应的文件操作对象的地址
 	const struct file_operations	*f_op;
 
 	/*
@@ -953,10 +973,14 @@ struct file {
 	 */
 	spinlock_t		f_lock;
 	atomic_long_t		f_count;
+	// 文件打开的标志
 	unsigned int 		f_flags;
+	// 权限
 	fmode_t			f_mode;
 	struct mutex		f_pos_lock;
+	// 文件描述符的偏移
 	loff_t			f_pos;
+	// 属于哪个进程
 	struct fown_struct	f_owner;
 	const struct cred	*f_cred;
 	struct file_ra_state	f_ra;
@@ -966,6 +990,7 @@ struct file {
 	void			*f_security;
 #endif
 	/* needed for tty driver, and maybe others */
+	// 给驱动程序员使用
 	void			*private_data;
 
 #ifdef CONFIG_EPOLL
@@ -2090,8 +2115,14 @@ struct io_uring_cmd;
 
 struct file_operations {
 	struct module *owner;
+	// app: lseek(fd, 54, SEEK_SET)
 	loff_t (*llseek) (struct file *, loff_t, int);
+	// buf指向用户进程里的缓冲区, len表示buf的大小(由用户调用read时传进来的)
+    // off表示fl文件描述符的操作偏移, 返回值为实际给用户的数据字节数.
+	// 注意，必须通过off指针来改变文件描述符的偏移(*off += 操作字节数). 不可以直接通过"fl->f_pos"来设置 
 	ssize_t (*read) (struct file *, char __user *, size_t, loff_t *);
+    // 用户进程把数据给驱动, 也就是让驱动存放用户进程传进来的数据.
+    // 参考read函数
 	ssize_t (*write) (struct file *, const char __user *, size_t, loff_t *);
 	ssize_t (*read_iter) (struct kiocb *, struct iov_iter *);
 	ssize_t (*write_iter) (struct kiocb *, struct iov_iter *);
@@ -2100,10 +2131,15 @@ struct file_operations {
 	int (*iterate) (struct file *, struct dir_context *);
 	int (*iterate_shared) (struct file *, struct dir_context *);
 	__poll_t (*poll) (struct file *, struct poll_table_struct *);
-	long (*unlocked_ioctl) (struct file *, unsigned int, unsigned long);
+	// cmd表示用户进程调用ioctl时的第二个参数, arg表示第三个参数(可选)
+	// 返回值为0表示ioctl成功， 返回负数表示失败.
+	long (*unlocked_ioctl) (struct file *, unsigned int cmd, unsigned long arg);
 	long (*compat_ioctl) (struct file *, unsigned int, unsigned long);
 	int (*mmap) (struct file *, struct vm_area_struct *);
 	unsigned long mmap_supported_flags;
+	// inode表示应用程序打开的文件的节点对象,  file表示打开文件获取到的文件描述符
+	// 返回值0表示成功打开，负数表示打开失败。内核根据open函数的返回值来确定是否给调用的用户进程分配文件描述符。
+    // 在驱动可以不实现此函数, 如不实现。则表示每次打开都是成功的.
 	int (*open) (struct inode *, struct file *);
 	int (*flush) (struct file *, fl_owner_t id);
 	int (*release) (struct inode *, struct file *);
@@ -2180,12 +2216,14 @@ struct inode_operations {
 static inline ssize_t call_read_iter(struct file *file, struct kiocb *kio,
 				     struct iov_iter *iter)
 {
+	// 调用对应文件系统的read_iter函数
 	return file->f_op->read_iter(kio, iter);
 }
 
 static inline ssize_t call_write_iter(struct file *file, struct kiocb *kio,
 				      struct iov_iter *iter)
 {
+	// ext4中是ext4_file_read_iter
 	return file->f_op->write_iter(kio, iter);
 }
 

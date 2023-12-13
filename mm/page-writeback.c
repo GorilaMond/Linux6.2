@@ -2430,6 +2430,7 @@ EXPORT_SYMBOL(tag_pages_for_writeback);
  *
  * Return: %0 on success, negative error code otherwise
  */
+// 根据 wbc 的 tagged_writepages 字段进行判断，配置不同的 tag，以及是否需要快速遍历脏页并标记
 int write_cache_pages(struct address_space *mapping,
 		      struct writeback_control *wbc, writepage_t writepage,
 		      void *data)
@@ -2446,6 +2447,7 @@ int write_cache_pages(struct address_space *mapping,
 	xa_mark_t tag;
 
 	pagevec_init(&pvec);
+	// 确定回写的起止地址
 	if (wbc->range_cyclic) {
 		index = mapping->writeback_index; /* prev offset */
 		end = -1;
@@ -2465,11 +2467,13 @@ int write_cache_pages(struct address_space *mapping,
 	while (!done && (index <= end)) {
 		int i;
 
+		// 查找并将与@tag匹配的页头放入pvec，返回页头数量
 		nr_pages = pagevec_lookup_range_tag(&pvec, mapping, &index, end,
 				tag);
 		if (nr_pages == 0)
 			break;
 
+		// 将获取的脏页进行回写
 		for (i = 0; i < nr_pages; i++) {
 			struct page *page = pvec.pages[i];
 
@@ -2496,18 +2500,22 @@ continue_unlock:
 				goto continue_unlock;
 			}
 
+			// 判断页面是否正在被回写，include/linux/page-flags.h TESTPAGEFLAG(Writeback, writeback, PF_NO_TAIL)
 			if (PageWriteback(page)) {
 				if (wbc->sync_mode != WB_SYNC_NONE)
 					wait_on_page_writeback(page);
 				else
+					// 若不同步，则解锁页面并继续下次循环
 					goto continue_unlock;
 			}
 
 			BUG_ON(PageWriteback(page));
+			// 清除页面脏标记并为写出到磁盘做准备
 			if (!clear_page_dirty_for_io(page))
 				goto continue_unlock;
 
 			trace_wbc_writepage(wbc, inode_to_bdi(mapping->host));
+			// 写出
 			error = (*writepage)(page, wbc, data);
 			if (unlikely(error)) {
 				/*
@@ -2569,6 +2577,7 @@ EXPORT_SYMBOL(write_cache_pages);
  * Function used by generic_writepages to call the real writepage
  * function and set the mapping flags on error
  */
+// 通用的回写函数，用来调用真正的回写函数
 static int __writepage(struct page *page, struct writeback_control *wbc,
 		       void *data)
 {
@@ -2617,7 +2626,8 @@ int do_writepages(struct address_space *mapping, struct writeback_control *wbc)
 	wb_bandwidth_estimate_start(wb);
 	while (1) {
 		if (mapping->a_ops->writepages)
-			ret = mapping->a_ops->writepages(mapping, wbc);
+			// 调用自定义的回写函数
+			ret = mapping->a_ops->writepages(mapping, wbc); // <
 		else
 			ret = generic_writepages(mapping, wbc);
 		if ((ret != -ENOMEM) || (wbc->sync_mode != WB_SYNC_ALL))
@@ -2701,6 +2711,7 @@ EXPORT_SYMBOL(noop_dirty_folio);
  *
  * NOTE: This relies on being atomic wrt interrupts.
  */
+// 更新folio对应的inode（mapping->inode）的i_wb，并更新脏页数量
 static void folio_account_dirtied(struct folio *folio,
 		struct address_space *mapping)
 {
@@ -2712,7 +2723,9 @@ static void folio_account_dirtied(struct folio *folio,
 		struct bdi_writeback *wb;
 		long nr = folio_nr_pages(folio);
 
+		// 更新inode->i_wb
 		inode_attach_wb(inode, &folio->page);
+		// 获取inode->i_wb
 		wb = inode_to_wb(inode);
 
 		__lruvec_stat_mod_folio(folio, NR_FILE_DIRTY, nr);
@@ -2756,6 +2769,7 @@ void folio_account_cleaned(struct folio *folio, struct bdi_writeback *wb)
  * lock).  This can also be called from mark_buffer_dirty(), which I
  * cannot prove is always protected against truncate.
  */
+// 并没有将indoe标记为脏
 void __folio_mark_dirty(struct folio *folio, struct address_space *mapping,
 			     int warn)
 {
@@ -2763,8 +2777,11 @@ void __folio_mark_dirty(struct folio *folio, struct address_space *mapping,
 
 	xa_lock_irqsave(&mapping->i_pages, flags);
 	if (folio->mapping) {	/* Race with truncate? */
+								// folio是否与磁盘对应数据一致
 		WARN_ON_ONCE(warn && !folio_test_uptodate(folio));
+		// 更新folio对应的inode（mapping->inode）的i_wb，并更新脏页数量
 		folio_account_dirtied(folio, mapping);
+		// 将页面标记为脏
 		__xa_set_mark(&mapping->i_pages, folio_index(folio),
 				PAGECACHE_TAG_DIRTY);
 	}

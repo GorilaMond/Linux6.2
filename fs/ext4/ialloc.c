@@ -142,7 +142,8 @@ ext4_read_inode_bitmap(struct super_block *sb, ext4_group_t block_group)
 					EXT4_GROUP_INFO_IBITMAP_CORRUPT);
 		return ERR_PTR(-EFSCORRUPTED);
 	}
-	bh = sb_getblk(sb, bitmap_blk);
+	// 获取块设备数据
+	bh = sb_getblk(sb, bitmap_blk); // <
 	if (unlikely(!bh)) {
 		ext4_warning(sb, "Cannot read inode bitmap - "
 			     "block_group = %u, inode_bitmap = %llu",
@@ -921,6 +922,7 @@ static int ext4_xattr_credits_for_new_inode(struct inode *dir, mode_t mode,
  * For other inodes, search forward from the parent directory's block
  * group to find a free inode.
  */
+// 为新目录分配inode索引
 struct inode *__ext4_new_inode(struct user_namespace *mnt_userns,
 			       handle_t *handle, struct inode *dir,
 			       umode_t mode, const struct qstr *qstr,
@@ -956,7 +958,7 @@ struct inode *__ext4_new_inode(struct user_namespace *mnt_userns,
 
 	ngroups = ext4_get_groups_count(sb);
 	trace_ext4_request_inode(dir, mode);
-	inode = new_inode(sb);
+	inode = new_inode(sb); // <
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
 	ei = EXT4_I(inode);
@@ -1052,6 +1054,7 @@ got_group:
 		}
 
 		brelse(inode_bitmap_bh);
+		// 获取磁盘的inode位图
 		inode_bitmap_bh = ext4_read_inode_bitmap(sb, group);
 		/* Skip groups with suspicious inode tables */
 		if (((!(sbi->s_mount_state & EXT4_FC_REPLAY))

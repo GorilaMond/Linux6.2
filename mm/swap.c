@@ -1123,6 +1123,7 @@ unsigned pagevec_lookup_range_tag(struct pagevec *pvec,
 		struct address_space *mapping, pgoff_t *index, pgoff_t end,
 		xa_mark_t tag)
 {
+	// 查找并将与@tag匹配的页头放入pvec，返回页头数量
 	pvec->nr = find_get_pages_range_tag(mapping, index, end, tag,
 					PAGEVEC_SIZE, pvec->pages);
 	return pagevec_count(pvec);

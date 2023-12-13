@@ -234,6 +234,8 @@ static ext4_fsblk_t ext4_ext_find_goal(struct inode *inode,
 		 */
 		ex = path[depth].p_ext;
 		if (ex) {
+			// 比如目标逻辑块号为92，这个时候92 > 90，那么从ext_pblk+2处能
+			// 分配物理块号，尽量保持物理块的连续性
 			ext4_fsblk_t ext_pblk = ext4_ext_pblock(ex);
 			ext4_lblk_t ext_block = le32_to_cpu(ex->ee_block);
 
@@ -250,6 +252,7 @@ static ext4_fsblk_t ext4_ext_find_goal(struct inode *inode,
 	}
 
 	/* OK. use inode's group */
+	// inode刚创建没有path，使用inode的group分配一个物理块号
 	return ext4_inode_to_goal_block(inode);
 }
 
@@ -879,6 +882,11 @@ void ext4_ext_tree_init(handle_t *handle, struct inode *inode)
 	ext4_mark_inode_dirty(handle, inode);
 }
 
+// 在ext4 extent B+树每一层索引节点(包含根节点)中找到起始逻辑块地址最接近传入的起始逻辑块地址的extent，
+// 路径上的ext4_extent_idx保存到path[ppos]->p_idx。
+// 然后找到最后一层叶子节点最接近传入逻辑块地址map->m_lblk的ext4_extent结构，
+// 保存到path[ppos]->p_ext，这个ext4_entent有可能包含了map->m_lblk，也有可能不包含，
+// 不包含的情况path[ppos]->p_ext是小于map->lblk，且最接近map->lblk的extent
 struct ext4_ext_path *
 ext4_find_extent(struct inode *inode, ext4_lblk_t block,
 		 struct ext4_ext_path **orig_path, int flags)
@@ -4099,6 +4107,7 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 	trace_ext4_ext_map_blocks_enter(inode, map->m_lblk, map->m_len, flags);
 
 	/* find extent for this block */
+	// 读取inode在磁盘上的extent tree，查找block对应的extent，保存在返回值ext4_ext_path中
 	path = ext4_find_extent(inode, map->m_lblk, NULL, 0);
 	if (IS_ERR(path)) {
 		err = PTR_ERR(path);
@@ -4138,6 +4147,7 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 		trace_ext4_ext_show_extent(inode, ee_block, ee_start, ee_len);
 
 		/* if found extent covers block, simply return it */
+		// 包含则直接返回
 		if (in_range(map->m_lblk, ee_block, ee_len)) {
 			newblock = map->m_lblk - ee_block + ee_start;
 			/* number of remaining blocks in the extent */
@@ -4254,10 +4264,12 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 	if (err)
 		allocated = ext4_ext_get_actual_len(&newex);
 	else
+		// 正常都会走到该流程，map->m_len代表一个连续的extent的length
 		allocated = map->m_len;
 
 	/* allocate new block */
 	ar.inode = inode;
+	// 确定申请的目标physical block，尽量保持连续性，避免碎片化
 	ar.goal = ext4_ext_find_goal(inode, path, map->m_lblk);
 	ar.logical = map->m_lblk;
 	/*
@@ -4283,6 +4295,8 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 		ar.flags |= EXT4_MB_DELALLOC_RESERVED;
 	if (flags & EXT4_GET_BLOCKS_METADATA_NOFAIL)
 		ar.flags |= EXT4_MB_USE_RESERVED;
+	
+	// 非常重要，执行分配physical block 逻辑
 	newblock = ext4_mb_new_blocks(handle, &ar, &err);
 	if (!newblock)
 		goto out;
@@ -4304,6 +4318,7 @@ got_allocated_blocks:
 		map->m_flags |= EXT4_MAP_UNWRITTEN;
 	}
 
+	// 新创建的extent插入extent b+树
 	err = ext4_ext_insert_extent(handle, inode, &path, &newex, flags);
 	if (err) {
 		if (allocated_clusters) {

@@ -386,7 +386,7 @@ static ssize_t new_sync_read(struct file *filp, char __user *buf, size_t len, lo
 	kiocb.ki_pos = (ppos ? *ppos : 0);
 	iov_iter_ubuf(&iter, ITER_DEST, buf, len);
 
-	ret = call_read_iter(filp, &kiocb, &iter);
+	ret = call_read_iter(filp, &kiocb, &iter); // <
 	BUG_ON(ret == -EIOCBQUEUED);
 	if (ppos)
 		*ppos = kiocb.ki_pos;
@@ -466,6 +466,7 @@ ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 
 	if (file->f_op->read)
 		ret = file->f_op->read(file, buf, count, pos);
+	// 对于ext4文件系统，没有read函数，只有read_iter
 	else if (file->f_op->read_iter)
 		ret = new_sync_read(file, buf, count, pos);
 	else
@@ -616,7 +617,8 @@ ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
 			pos = *ppos;
 			ppos = &pos;
 		}
-		ret = vfs_read(f.file, buf, count, ppos);
+		// vfs层接口
+		ret = vfs_read(f.file, buf, count, ppos); // <
 		if (ret >= 0 && ppos)
 			f.file->f_pos = pos;
 		fdput_pos(f);
@@ -626,7 +628,7 @@ ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
 
 SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 {
-	return ksys_read(fd, buf, count);
+	return ksys_read(fd, buf, count); // <
 }
 
 // 获取struct fd引用计数和pos锁定，获取pos并主要通过调用vfs_write()实现数据写入

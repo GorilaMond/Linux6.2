@@ -89,6 +89,7 @@ int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 }
 EXPORT_SYMBOL(add_to_page_cache_lru);
 
+// 根据bdev->bd_inode->i_mapping地址空间在page cache基树中查找页面
 noinline
 struct page *pagecache_get_page(struct address_space *mapping, pgoff_t index,
 		int fgp_flags, gfp_t gfp)

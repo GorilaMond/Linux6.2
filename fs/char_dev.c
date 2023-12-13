@@ -197,6 +197,9 @@ __unregister_chrdev_region(unsigned major, unsigned baseminor, int minorct)
  *
  * Return value is zero on success, a negative error code on failure.
  */
+// 静态：申请指定的设备号, from指设备号(需已指定主设备和次设备号), 
+// count指使用该驱动有多少个设备(次设备号), 
+// name设备名(用于查看用, 长度不能超过64字节   )
 int register_chrdev_region(dev_t from, unsigned count, const char *name)
 {
 	struct char_device_struct *cd;
@@ -233,6 +236,9 @@ fail:
  * chosen dynamically, and returned (along with the first minor number)
  * in @dev.  Returns zero or a negative error code.
  */
+//动态申请设备号, 由内核分配没有使用的主设备号, 
+// 分配好的设备号存在dev(不需初始化), 
+// baseminor指次设备号从多少开始, count指设备个数， name设备名
 int alloc_chrdev_region(dev_t *dev, unsigned baseminor, unsigned count,
 			const char *name)
 {
@@ -308,6 +314,7 @@ out2:
  * starting with @from.  The caller should normally be the one who
  * allocated those numbers in the first place...
  */
+// 释放设备号, from指设备号， count指设备数
 void unregister_chrdev_region(dev_t from, unsigned count)
 {
 	dev_t to = from + count;

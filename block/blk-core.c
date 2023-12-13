@@ -1081,6 +1081,7 @@ void blk_start_plug_nr_ios(struct blk_plug *plug, unsigned short nr_ios)
  *   plug. By flushing the pending I/O when the process goes to sleep, we avoid
  *   this kind of deadlock.
  */
+// 设置该线程开启请求合并模式
 void blk_start_plug(struct blk_plug *plug)
 {
 	blk_start_plug_nr_ios(plug, 1);

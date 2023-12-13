@@ -252,8 +252,10 @@ void wb_wait_for_completion(struct wb_completion *done)
 static atomic_t isw_nr_in_flight = ATOMIC_INIT(0);
 static struct workqueue_struct *isw_wq;
 
+// attach wb to inode
 void __inode_attach_wb(struct inode *inode, struct page *page)
 {
+	// 获取indoe对应的设备
 	struct backing_dev_info *bdi = inode_to_bdi(inode);
 	struct bdi_writeback *wb = NULL;
 
@@ -278,6 +280,7 @@ void __inode_attach_wb(struct inode *inode, struct page *page)
 	 * There may be multiple instances of this function racing to
 	 * update the same inode.  Use cmpxchg() to tell the winner.
 	 */
+	// attach wb to inode
 	if (unlikely(cmpxchg(&inode->i_wb, NULL, wb)))
 		wb_put(wb);
 }
@@ -1610,7 +1613,7 @@ __writeback_single_inode(struct inode *inode, struct writeback_control *wbc)
 
 	trace_writeback_single_inode_start(inode, wbc, nr_to_write);
 
-	ret = do_writepages(mapping, wbc);
+	ret = do_writepages(mapping, wbc); // <
 
 	/*
 	 * Make sure to wait on the data before writing out the metadata.
@@ -1808,6 +1811,7 @@ static long writeback_chunk_size(struct bdi_writeback *wb,
  * unlock and relock that for each inode it ends up doing
  * IO for.
  */
+// 设置回写任务的参数
 static long writeback_sb_inodes(struct super_block *sb,
 				struct bdi_writeback *wb,
 				struct wb_writeback_work *work)
@@ -1826,6 +1830,7 @@ static long writeback_sb_inodes(struct super_block *sb,
 	long write_chunk;
 	long total_wrote = 0;  /* count both pages and inodes */
 
+	// 对wb中的inode进行遍历
 	while (!list_empty(&wb->b_io)) {
 		struct inode *inode = wb_inode(wb->b_io.prev);
 		struct bdi_writeback *tmp_wb;
@@ -1891,8 +1896,10 @@ static long writeback_sb_inodes(struct super_block *sb,
 			continue;
 		}
 		inode->i_state |= I_SYNC;
+		// 将wbc和inode进行绑定
 		wbc_attach_and_unlock_inode(&wbc, inode);
 
+		// 确定回写页面数量
 		write_chunk = writeback_chunk_size(wb, work);
 		wbc.nr_to_write = write_chunk;
 		wbc.pages_skipped = 0;
@@ -1901,8 +1908,9 @@ static long writeback_sb_inodes(struct super_block *sb,
 		 * We use I_SYNC to pin the inode in memory. While it is set
 		 * evict_inode() will wait so the inode cannot be freed.
 		 */
-		__writeback_single_inode(inode, &wbc);
+		__writeback_single_inode(inode, &wbc); // <
 
+		// 将wbc和inode解绑
 		wbc_detach_inode(&wbc);
 		work->nr_pages -= write_chunk - wbc.nr_to_write;
 		wrote = write_chunk - wbc.nr_to_write - wbc.pages_skipped;
@@ -1972,7 +1980,7 @@ static long __writeback_inodes_wb(struct bdi_writeback *wb,
 			redirty_tail(inode, wb);
 			continue;
 		}
-		wrote += writeback_sb_inodes(sb, wb, work);
+		wrote += writeback_sb_inodes(sb, wb, work); // <
 		up_read(&sb->s_umount);
 
 		/* refer to the same tests at the end of writeback_sb_inodes */
@@ -2077,7 +2085,7 @@ static long wb_writeback(struct bdi_writeback *wb,
 		if (work->sb)
 			progress = writeback_sb_inodes(work->sb, wb, work);
 		else
-			progress = __writeback_inodes_wb(wb, work);
+			progress = __writeback_inodes_wb(wb, work); // <
 		trace_writeback_written(wb, work);
 
 		/*
@@ -2210,6 +2218,7 @@ static long wb_check_start_all(struct bdi_writeback *wb)
 /*
  * Retrieve work items and do the writeback they describe
  */
+// 检索工作项目并执行wb描述的回写工作
 static long wb_do_writeback(struct bdi_writeback *wb)
 {
 	struct wb_writeback_work *work;
@@ -2218,7 +2227,7 @@ static long wb_do_writeback(struct bdi_writeback *wb)
 	set_bit(WB_writeback_running, &wb->state);
 	while ((work = get_next_work_item(wb)) != NULL) {
 		trace_writeback_exec(wb, work);
-		wrote += wb_writeback(wb, work);
+		wrote += wb_writeback(wb, work); // <
 		finish_writeback_work(wb, work);
 	}
 
@@ -2258,7 +2267,7 @@ void wb_workfn(struct work_struct *work)
 		 * rescuer as work_list needs to be drained.
 		 */
 		do {
-			pages_written = wb_do_writeback(wb);
+			pages_written = wb_do_writeback(wb); // <
 			trace_writeback_pages_written(pages_written);
 		} while (!list_empty(&wb->work_list));
 	} else {
@@ -2430,6 +2439,7 @@ void __mark_inode_dirty(struct inode *inode, int flags)
 		 * for just I_DIRTY_PAGES or I_DIRTY_TIME.
 		 */
 		trace_writeback_dirty_inode_start(inode, flags);
+		// 文件系统自定的标记函数，如 fs/ext4/inode.c ext4_dirty_inode
 		if (sb->s_op->dirty_inode)
 			sb->s_op->dirty_inode(inode,
 				flags & (I_DIRTY_INODE | I_DIRTY_TIME));

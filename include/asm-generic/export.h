@@ -51,6 +51,7 @@ __kstrtab_\name:
 #endif
 .endm
 
+// TRIM_UNUSED_KSYMS 宏控可以一定程度上减小内核体积，主要是通过对内核中一些用不到的符号进行裁剪
 #if defined(CONFIG_TRIM_UNUSED_KSYMS)
 
 #include <linux/kconfig.h>
@@ -76,6 +77,7 @@ __ksym_marker_\sym:
 #define __EXPORT_SYMBOL(sym, val, sec) ___EXPORT_SYMBOL sym, val, sec
 #endif
 
+// 定义了下面全局的函数，可以在其他的驱动模块中使用，类似C中的全局函数extren 关键字的使用
 #define EXPORT_SYMBOL(name)					\
 	__EXPORT_SYMBOL(name, KSYM_FUNC(name),)
 #define EXPORT_SYMBOL_GPL(name) 				\

@@ -123,6 +123,7 @@ struct kparam_array
  *	bool: a bool, values 0/1, y/n, Y/N.
  *	invbool: the above, only sense-reversed (N = true).
  */
+// 模块参数是用于在加载驱动模块时，指定模块里面的特定变量的具体值.
 #define module_param(name, type, perm)				\
 	module_param_named(name, name, type, perm)
 

@@ -32,6 +32,7 @@
  * Rounds @x down to next multiple of @y (which must be a power of 2).
  * To perform arbitrary rounding down, use rounddown() below.
  */
+// 将x数值精确到 y（2的次方）
 #define round_down(x, y) ((x) & ~__round_mask(x, y))
 
 #define DIV_ROUND_UP __KERNEL_DIV_ROUND_UP

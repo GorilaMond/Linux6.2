@@ -893,6 +893,7 @@ noinline int __filemap_add_folio(struct address_space *mapping,
 			}
 		}
 
+		// 并将其加入page cache和LRU链表
 		xas_store(&xas, folio);
 		if (xas_error(&xas))
 			goto unlock;
@@ -1963,6 +1964,7 @@ no_page:
 			gfp |= GFP_NOWAIT | __GFP_NOWARN;
 		}
 
+		// 没找到page cache，创建新页面
 		folio = filemap_alloc_folio(gfp, 0);
 		if (!folio)
 			return NULL;
@@ -1974,6 +1976,7 @@ no_page:
 		if (fgp_flags & FGP_ACCESSED)
 			__folio_set_referenced(folio);
 
+		// 并加入page cache基树，以及LRU链表
 		err = filemap_add_folio(mapping, folio, index, gfp);
 		if (unlikely(err)) {
 			folio_put(folio);
@@ -2527,6 +2530,7 @@ static int filemap_create_folio(struct file *file,
 	struct folio *folio;
 	int error;
 
+	// 分配一个新页面
 	folio = filemap_alloc_folio(mapping_gfp_mask(mapping), 0);
 	if (!folio)
 		return -ENOMEM;
@@ -2545,13 +2549,15 @@ static int filemap_create_folio(struct file *file,
 	 * well to keep locking rules simple.
 	 */
 	filemap_invalidate_lock_shared(mapping);
+	// 将其加入page cache和LRU链表
 	error = filemap_add_folio(mapping, folio, index,
 			mapping_gfp_constraint(mapping, GFP_KERNEL));
 	if (error == -EEXIST)
 		error = AOP_TRUNCATED_PAGE;
 	if (error)
 		goto error;
-
+	
+	// 调用对应的readpage函数，从磁盘中读入文件数据
 	error = filemap_read_folio(file, mapping->a_ops->read_folio, folio);
 	if (error)
 		goto error;
@@ -2593,7 +2599,7 @@ static int filemap_get_pages(struct kiocb *iocb, struct iov_iter *iter,
 retry:
 	if (fatal_signal_pending(current))
 		return -EINTR;
-
+	// 查找pagecache或者创建新的pagecache
 	filemap_get_read_batch(mapping, index, last_index - 1, fbatch);
 	if (!folio_batch_count(fbatch)) {
 		if (iocb->ki_flags & IOCB_NOIO)

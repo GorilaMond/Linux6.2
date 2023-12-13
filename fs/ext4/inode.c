@@ -2127,7 +2127,7 @@ static int mpage_submit_page(struct mpage_da_data *mpd, struct page *page)
 		len = size & ~PAGE_MASK;
 	else
 		len = PAGE_SIZE;
-	err = ext4_bio_write_page(&mpd->io_submit, page, len);
+	err = ext4_bio_write_page(&mpd->io_submit, page, len); // <
 	if (!err)
 		mpd->wbc->nr_to_write--;
 	mpd->first_page++;
@@ -2164,15 +2164,19 @@ static bool mpage_add_bh_to_extent(struct mpage_da_data *mpd, ext4_lblk_t lblk,
 	struct ext4_map_blocks *map = &mpd->map;
 
 	/* Buffer that doesn't need mapping for writeback? */
+	// 有些情况下page cache不需要向extent中添加了
 	if (!buffer_dirty(bh) || !buffer_mapped(bh) ||
 	    (!buffer_delay(bh) && !buffer_unwritten(bh))) {
 		/* So far no extent to map => we write the buffer right away */
+		// 覆盖写场景的dirty page，其状态会是：
+		// buffer_dirty和buffer_mapped, !buffer_delay和！buffer_unwritten
 		if (map->m_len == 0)
 			return true;
 		return false;
 	}
 
 	/* First block in the extent? */
+	// extent中的第一个block，设置一些map字段
 	if (map->m_len == 0) {
 		/* We cannot map unless handle is started... */
 		if (!mpd->do_map)
@@ -2184,10 +2188,12 @@ static bool mpage_add_bh_to_extent(struct mpage_da_data *mpd, ext4_lblk_t lblk,
 	}
 
 	/* Don't go larger than mballoc is willing to allocate */
+	// extent中保包含的连续block不能超过2048个，超过之后就返回false，表示不继续添加extent了
 	if (map->m_len >= MAX_WRITEPAGES_EXTENT_LEN)
 		return false;
 
 	/* Can we merge the block to our big extent? */
+	// 如果当前page对应的逻辑块号和extent中的连续，且状态一致，map->m_len++，表示继续添加到extent中
 	if (lblk == map->m_lblk + map->m_len &&
 	    (bh->b_state & BH_FLAGS) == map->m_flags) {
 		map->m_len++;
@@ -2212,6 +2218,7 @@ static bool mpage_add_bh_to_extent(struct mpage_da_data *mpd, ext4_lblk_t lblk,
  * extent to map because we cannot extend it anymore. It can also return value
  * < 0 in case of error during IO submission.
  */
+// 将page cache向extent添加
 static int mpage_process_page_bufs(struct mpage_da_data *mpd,
 				   struct buffer_head *head,
 				   struct buffer_head *bh,
@@ -2241,6 +2248,7 @@ static int mpage_process_page_bufs(struct mpage_da_data *mpd,
 	} while (lblk++, (bh = bh->b_this_page) != head);
 	/* So far everything mapped? Submit the page for IO. */
 	if (mpd->map.m_len == 0) {
+		// 向块设备层提交io请求
 		err = mpage_submit_page(mpd, head->b_page);
 		if (err < 0)
 			return err;
@@ -2687,7 +2695,7 @@ static int mpage_prepare_extent_to_map(struct mpage_da_data *mpd)
 			if (!mpd->can_map) {
 				if (ext4_page_nomap_can_writeout(page)) {
 					// 提交io请求
-					err = mpage_submit_page(mpd, page);
+					err = mpage_submit_page(mpd, page); // ?
 					if (err < 0)
 						goto out;
 				} else {
@@ -2699,8 +2707,10 @@ static int mpage_prepare_extent_to_map(struct mpage_da_data *mpd)
 				lblk = ((ext4_lblk_t)page->index) <<
 					(PAGE_SHIFT - blkbits);
 				head = page_buffers(page);
+				// 如果mpage_process_page_bufs返回0，代码停止将page cache继续向extent添加
+				// 返回1表示继续寻找后续的page cache看是否能添加到extent中。
 				err = mpage_process_page_bufs(mpd, head, head,
-							      lblk);
+							      lblk); // <
 				if (err <= 0)
 					goto out;
 				err = 0;
@@ -2749,8 +2759,10 @@ static int ext4_do_writepages(struct mpage_da_data *mpd)
 		goto out_writepages;
 
 	if (ext4_should_journal_data(inode)) {
+		// 设置该线程开启请求合并模式
 		blk_start_plug(&plug);
 		ret = write_cache_pages(mapping, wbc, ext4_writepage_cb, NULL);
+		// 关闭线程请求合并
 		blk_finish_plug(&plug);
 		goto out_writepages;
 	}
@@ -2815,9 +2827,13 @@ static int ext4_do_writepages(struct mpage_da_data *mpd)
 	// 初始化io请求
 	ext4_io_submit_init(&mpd->io_submit, wbc);
 retry:
+	// 如果是主动sync调用或者wbc设置了tagged_writepages，
+	// 将first-last范围的cache页面修改为PAGECACHE_TAG_TOWRITE TAG，意味着需要回写，
+	// （还没开始，开始回写中是PAGECACHE_TAG_WRITEBACK)
 	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
 		tag_pages_for_writeback(mapping, mpd->first_page,
 					mpd->last_page);
+	// 涉及块设备层的知识，主要作用是将bio合并，构造出request，提升io效率
 	blk_start_plug(&plug);
 
 	/*
@@ -2826,6 +2842,7 @@ retry:
 	 * in the block layer on device congestion while having transaction
 	 * started.
 	 */
+	// 内核一个io性能优化引入的修改，do_map因为这此时不能做block map动作，
 	mpd->do_map = 0;
 	mpd->scanned_until_end = 0;
 	mpd->io_submit.io_end = ext4_init_io_end(inode, GFP_KERNEL);
@@ -2833,17 +2850,25 @@ retry:
 		ret = -ENOMEM;
 		goto unplug;
 	}
-	// 找到连续的还未在磁盘上建立块映射的脏页，把它们加入 extent
+	// 调用mpage_prepare_extent_to_map准备extent，在ext4中extent代表一块连续的block，
+	// 这也是delay allocation的魅力，延迟分配就是要在ext4_writepages回写磁盘时尽量合并连续的block，连续的块就是extent。
+
+	// 第一次调用该函数只针对覆盖写场景的buffer_mapped的page回写，这种场景下由于已经映射过物理块号，合完extent直接提交IO
+
+	// 首次调用该函数主要是针对覆盖写的场景如果有覆盖写的页面将会直接submit io提交写入磁盘。
+	// 如果没有覆盖写这种pagecache，假设全都是delay延迟写的，那么由于domap=0，也不会触发实际的磁盘映射等逻辑。
 	ret = mpage_prepare_extent_to_map(mpd);
 	/* Unlock pages we didn't use */
 	mpage_release_unused_pages(mpd, false);
-	/* Submit prepared bio 提交io请求 */
+	/* Submit prepared bio */
+    //调用submit_bio向block layer提交请求
 	ext4_io_submit(&mpd->io_submit);
 	ext4_put_io_end_defer(mpd->io_submit.io_end);
 	mpd->io_submit.io_end = NULL;
 	if (ret < 0)
 		goto unplug;
 
+	//循环回写，直接达到文件末尾或者写完数据
 	while (!mpd->scanned_until_end && wbc->nr_to_write > 0) {
 		/* For each extent of pages we use new io_end */
 		mpd->io_submit.io_end = ext4_init_io_end(inode, GFP_KERNEL);
@@ -2879,11 +2904,20 @@ retry:
 		mpd->do_map = 1;
 
 		trace_ext4_da_write_pages(inode, mpd->first_page, wbc);
-		ret = mpage_prepare_extent_to_map(mpd);
+		// 核心函数，作用是尝试准备extent，由于上面设置了do_map，这里只针对buffer_mapped的page
+		
+		// 主要是针对delayed和unwritten的pagecache，将需要映射的连续脏页映射成extent。
+		// 因为不连续或者块数量超过extent上线，将分多次提交到下一步做物理块映射，所以是个循环
+		
+		// 第二次是针对buffer_delay延迟回写的场景，这种场景下没有映射物理block，
+		// 还需要调用mpage_map_and_submit_extent完成块映射。
+		ret = mpage_prepare_extent_to_map(mpd); // <
 		if (!ret && mpd->map.m_len)
 			// 映射和提交这些脏页
+			// 前面mpage_prepare_extent_to_map准备了好了一个extent，接下来就要开始做map
+			// 将extent中的逻辑块号分配映射物理块号
 			ret = mpage_map_and_submit_extent(handle, mpd,
-					&give_up_on_write);
+					&give_up_on_write); // <
 		/*
 		 * Caution: If the handle is synchronous,
 		 * ext4_journal_stop() can wait for transaction commit
@@ -2955,10 +2989,12 @@ out_writepages:
 	return ret;
 }
 
+// 用于将mapping指向的page cache缓存写回磁盘，这个中间很重要的过程是delay allcation特性要做一些合并逻辑，尽量合并连续的块请求。
 static int ext4_writepages(struct address_space *mapping,
 			   struct writeback_control *wbc)
 {
 	struct super_block *sb = mapping->host->i_sb;
+	// 延迟分配结构
 	struct mpage_da_data mpd = {
 		.inode = mapping->host,
 		.wbc = wbc,
@@ -2970,7 +3006,7 @@ static int ext4_writepages(struct address_space *mapping,
 		return -EIO;
 
 	percpu_down_read(&EXT4_SB(sb)->s_writepages_rwsem);
-	ret = ext4_do_writepages(&mpd);
+	ret = ext4_do_writepages(&mpd); // <
 	percpu_up_read(&EXT4_SB(sb)->s_writepages_rwsem);
 
 	return ret;

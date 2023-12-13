@@ -185,6 +185,7 @@ EXPORT_SYMBOL(end_buffer_write_sync);
  * may be quite high.  This code could TryLock the page, and if that
  * succeeds, there is no need to take private_lock.
  */
+// bh_lrus没找到就要到对应的page cache中查找页面
 static struct buffer_head *
 __find_get_block_slow(struct block_device *bdev, sector_t block)
 {
@@ -199,16 +200,19 @@ __find_get_block_slow(struct block_device *bdev, sector_t block)
 	static DEFINE_RATELIMIT_STATE(last_warned, HZ, 1);
 
 	index = block >> (PAGE_SHIFT - bd_inode->i_blkbits);
-	page = find_get_page_flags(bd_mapping, index, FGP_ACCESSED);
+	// 查找page cache，根据bdev->bd_inode->i_mapping地址空间在page cache基树中查找页面
+	page = find_get_page_flags(bd_mapping, index, FGP_ACCESSED); // <
 	if (!page)
 		goto out;
 
 	spin_lock(&bd_mapping->private_lock);
+	// 找到page cache看是否有对应的buffer_head，没有则返回NULL
 	if (!page_has_buffers(page))
 		goto out_unlock;
 	head = page_buffers(page);
 	bh = head;
 	do {
+			// include/linux/buffer_head.h:104
 		if (!buffer_mapped(bh))
 			all_mapped = 0;
 		else if (bh->b_blocknr == block) {
@@ -824,12 +828,14 @@ struct buffer_head *alloc_page_buffers(struct page *page, unsigned long size,
 	old_memcg = set_active_memcg(memcg);
 
 	head = NULL;
+	// 分配以页大小为总量，每个块大小取决于blocksize大小
 	offset = PAGE_SIZE;
 	while ((offset -= size) >= 0) {
-		bh = alloc_buffer_head(gfp);
+		// 从slab缓存中分配空闲buffer_head结构
+		bh = alloc_buffer_head(gfp); // <
 		if (!bh)
 			goto no_grow;
-
+		// 分配后将各个buffer_head用b_this_page串成链表
 		bh->b_this_page = head;
 		bh->b_blocknr = -1;
 		head = bh;
@@ -837,10 +843,14 @@ struct buffer_head *alloc_page_buffers(struct page *page, unsigned long size,
 		bh->b_size = size;
 
 		/* Link the buffer to its page */
+		// 设置buffer的数据指向地址。通过set_bh_page设置
+		// 各个buffer_head的数据指向地址，该地址也就是page
+		// 对应的虚拟地址，每个buffer_head还会保存相对页面的偏移地址。
 		set_bh_page(bh, page, offset);
 	}
 out:
 	set_active_memcg(old_memcg);
+	// 链表头，即最后分配的buffer_head
 	return head;
 /*
  * In case anything failed, we just free everything we got.
@@ -862,13 +872,14 @@ static inline void
 link_dev_buffers(struct page *page, struct buffer_head *head)
 {
 	struct buffer_head *bh, *tail;
-
+	// 将page对应的所有buffer_head连成一个环形链表
 	bh = head;
 	do {
 		tail = bh;
 		bh = bh->b_this_page;
 	} while (bh);
 	tail->b_this_page = head;
+	// 将buffer关联到对应的page上，将page->private指向buffer_head
 	attach_page_private(page, head);
 }
 
@@ -943,7 +954,7 @@ grow_dev_page(struct block_device *bdev, sector_t block,
 	 */
 	gfp_mask |= __GFP_NOFAIL;
 
-	page = find_or_create_page(inode->i_mapping, index, gfp_mask);
+	page = find_or_create_page(inode->i_mapping, index, gfp_mask); // <
 
 	BUG_ON(!PageLocked(page));
 
@@ -962,7 +973,8 @@ grow_dev_page(struct block_device *bdev, sector_t block,
 	/*
 	 * Allocate some buffers for this page
 	 */
-	bh = alloc_page_buffers(page, size, true);
+	// 找到或新建的页面没有buffer_head，创建新的buffer_head
+	bh = alloc_page_buffers(page, size, true); // <
 
 	/*
 	 * Link the page to the buffers and initialise them.  Take the
@@ -970,6 +982,7 @@ grow_dev_page(struct block_device *bdev, sector_t block,
 	 * run under the page lock.
 	 */
 	spin_lock(&inode->i_mapping->private_lock);
+	// 将page对应的所有buffer_head连成一个环形链表
 	link_dev_buffers(page, bh);
 	end_block = init_page_buffers(page, bdev, (sector_t)index << sizebits,
 			size);
@@ -1096,18 +1109,23 @@ void mark_buffer_dirty(struct buffer_head *bh)
 			return;
 	}
 
+	// include/linux/buffer_head.h TAS_BUFFER_FNS(Dirty, dirty)
 	if (!test_set_buffer_dirty(bh)) {
 		struct page *page = bh->b_page;
 		struct address_space *mapping = NULL;
 
 		lock_page_memcg(page);
-		if (!TestSetPageDirty(page)) {
 			mapping = page_mapping(page);
+		// 在大页头部标记为脏 include/linux/page-flags.h TESTSCFLAG(Dirty, dirty, PF_HEAD)
+		if (!TestSetPageDirty(page)) {
 			if (mapping)
+				// 在mapping xarray中标记为脏，更新脏页数量
+				// 更新inode->i_wb
 				__set_page_dirty(page, mapping, 0);
 		}
 		unlock_page_memcg(page);
 		if (mapping)
+			// 将 inode 标记为脏
 			__mark_inode_dirty(mapping->host, I_DIRTY_PAGES);
 	}
 }
@@ -1264,6 +1282,7 @@ static void bh_lru_install(struct buffer_head *bh)
 /*
  * Look up the bh in this cpu's LRU.  If it's there, move it to the head.
  */
+// //在每CPU变量bh_lrus中查找BH
 static struct buffer_head *
 lookup_bh_lru(struct block_device *bdev, sector_t block, unsigned size)
 {
@@ -1302,12 +1321,15 @@ lookup_bh_lru(struct block_device *bdev, sector_t block, unsigned size)
 struct buffer_head *
 __find_get_block(struct block_device *bdev, sector_t block, unsigned size)
 {
+	//在每CPU变量bh_lrus中查找BH
 	struct buffer_head *bh = lookup_bh_lru(bdev, block, size);
 
 	if (bh == NULL) {
 		/* __find_get_block_slow will mark the page accessed */
+		//bh_lrus没找到就要到对应的page cache中查找页面
 		bh = __find_get_block_slow(bdev, block);
 		if (bh)
+			// 如果有找到，把找到的bh放入每CPU bh_lrus中，提高访问速度
 			bh_lru_install(bh);
 	} else
 		touch_buffer(bh);
@@ -1332,6 +1354,7 @@ __getblk_gfp(struct block_device *bdev, sector_t block,
 
 	might_sleep();
 	if (bh == NULL)
+		// CPU变量bh_lrus和page cache中都没有找到目标BH，就需要从块设备读取了
 		bh = __getblk_slow(bdev, block, size, gfp);
 	return bh;
 }
@@ -1432,6 +1455,7 @@ void invalidate_bh_lrus_cpu(void)
 void set_bh_page(struct buffer_head *bh,
 		struct page *page, unsigned long offset)
 {
+	// b_page指向对应页面
 	bh->b_page = page;
 	BUG_ON(offset >= PAGE_SIZE);
 	if (PageHighMem(page))
@@ -1440,6 +1464,7 @@ void set_bh_page(struct buffer_head *bh,
 		 */
 		bh->b_data = (char *)(0 + offset);
 	else
+		// 设置数据指向地址
 		bh->b_data = page_address(page) + offset;
 }
 EXPORT_SYMBOL(set_bh_page);
@@ -2899,6 +2924,7 @@ static void recalc_bh_state(void)
 
 struct buffer_head *alloc_buffer_head(gfp_t gfp_flags)
 {
+	// 在slab中分配空闲buffer_head对象
 	struct buffer_head *ret = kmem_cache_zalloc(bh_cachep, gfp_flags);
 	if (ret) {
 		INIT_LIST_HEAD(&ret->b_assoc_buffers);

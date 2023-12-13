@@ -411,7 +411,10 @@ static inline struct inode *folio_inode(struct folio *folio)
 static inline void folio_attach_private(struct folio *folio, void *data)
 {
 	folio_get(folio);
+	// 将folio->private指向buffer_head
 	folio->private = data;
+	// 设置PG_Private标志，表示有folio头有对应fs的数据，即buffer。
+	// include/linux/page-flags.h PAGEFLAG(Private, private, PF_ANY)
 	folio_set_private(folio);
 }
 
@@ -565,6 +568,7 @@ static inline struct page *find_get_page(struct address_space *mapping,
 static inline struct page *find_get_page_flags(struct address_space *mapping,
 					pgoff_t offset, int fgp_flags)
 {
+	// 查找page cache
 	return pagecache_get_page(mapping, offset, fgp_flags, 0);
 }
 
@@ -609,6 +613,8 @@ static inline struct page *find_lock_page(struct address_space *mapping,
 static inline struct page *find_or_create_page(struct address_space *mapping,
 					pgoff_t index, gfp_t gfp_mask)
 {
+	// 根据bdev->bd_inode->i_mapping地址空间在page cache基树中查找页面
+	// 使用了创建新页面标识
 	return pagecache_get_page(mapping, index,
 					FGP_LOCK|FGP_ACCESSED|FGP_CREAT,
 					gfp_mask);
@@ -1046,6 +1052,7 @@ void folio_end_writeback(struct folio *folio);
 void wait_for_stable_page(struct page *page);
 void folio_wait_stable(struct folio *folio);
 void __folio_mark_dirty(struct folio *folio, struct address_space *, int warn);
+// 设置page页dirty标志的核心函数
 static inline void __set_page_dirty(struct page *page,
 		struct address_space *mapping, int warn)
 {
