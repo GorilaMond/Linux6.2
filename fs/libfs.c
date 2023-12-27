@@ -1129,6 +1129,7 @@ int __generic_file_fsync(struct file *file, loff_t start, loff_t end,
 	int err;
 	int ret;
 
+	// 下刷 page cache 中的脏页
 	err = file_write_and_wait_range(file, start, end);
 	if (err)
 		return err;
@@ -1140,6 +1141,10 @@ int __generic_file_fsync(struct file *file, loff_t start, loff_t end,
 	if (datasync && !(inode->i_state & I_DIRTY_DATASYNC))
 		goto out;
 
+	// indoe 本身元数据只是时间戳是脏时，
+	// fdatasync 就会跳过 sync_inode_metadata，
+	// 不将元数据一起下刷到底层设备上；fsync 则不会跳过元数据的下刷。
+	// fsync 至少需要两次 IO 写操作，开销比 fdatasync 更大
 	err = sync_inode_metadata(inode, 1);
 	if (ret == 0)
 		ret = err;

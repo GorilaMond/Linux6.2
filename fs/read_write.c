@@ -488,11 +488,13 @@ static ssize_t new_sync_write(struct file *filp, const char __user *buf, size_t 
 	struct iov_iter iter;
 	ssize_t ret;
 
+	// 将用户配置的 O_SYNC 进行解析
 	init_sync_kiocb(&kiocb, filp);
 	kiocb.ki_pos = (ppos ? *ppos : 0);
 	iov_iter_ubuf(&iter, ITER_SOURCE, (void __user *)buf, len);
 
-	// 调用filp->f_op->write_iter(kio, iter)，例如 ext4_file_write_iter
+	// 调用filp->f_op->write_iter(kio, iter)
+	// 例如 ext4_file_write_iter、generic_file_write_iter 
 	ret = call_write_iter(filp, &kiocb, &iter);
 	BUG_ON(ret == -EIOCBQUEUED);
 	if (ret > 0 && ppos)
@@ -588,6 +590,7 @@ ssize_t vfs_write(struct file *file, const char __user *buf, size_t count, loff_
 	if (file->f_op->write)
 		ret = file->f_op->write(file, buf, count, pos);
 	else if (file->f_op->write_iter)
+		// ext4没有实现write函数，所以会执行这个分支
 		ret = new_sync_write(file, buf, count, pos);
 	else
 		ret = -EINVAL;
@@ -643,7 +646,7 @@ ssize_t ksys_write(unsigned int fd, const char __user *buf, size_t count)
 			pos = *ppos;
 			ppos = &pos;
 		}
-		ret = vfs_write(f.file, buf, count, ppos);
+		ret = vfs_write(f.file, buf, count, ppos); // <
 		if (ret >= 0 && ppos)
 			f.file->f_pos = pos;
 		fdput_pos(f);
@@ -656,7 +659,7 @@ ssize_t ksys_write(unsigned int fd, const char __user *buf, size_t count)
 SYSCALL_DEFINE3(write, unsigned int, fd, const char __user *, buf,
 		size_t, count)
 {
-	return ksys_write(fd, buf, count);
+	return ksys_write(fd, buf, count); // <
 }
 
 ssize_t ksys_pread64(unsigned int fd, char __user *buf, size_t count,

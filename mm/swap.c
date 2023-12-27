@@ -1090,9 +1090,11 @@ EXPORT_SYMBOL(release_pages);
 void __pagevec_release(struct pagevec *pvec)
 {
 	if (!pvec->percpu_pvec_drained) {
+		// 先将各个pagevec刷到对应LRU链表
 		lru_add_drain();
 		pvec->percpu_pvec_drained = true;
 	}
+	// 然后针对上面inode的page cache减少页面引用计数，并回收0引用页面
 	release_pages(pvec->pages, pagevec_count(pvec));
 	pagevec_reinit(pvec);
 }

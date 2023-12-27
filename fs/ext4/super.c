@@ -171,7 +171,7 @@ static inline void __ext4_read_bh(struct buffer_head *bh, blk_opf_t op_flags,
 
 	bh->b_end_io = end_io ? end_io : end_buffer_read_sync;
 	get_bh(bh);
-	submit_bh(REQ_OP_READ | op_flags, bh);
+	submit_bh(REQ_OP_READ | op_flags, bh); // <
 }
 
 void ext4_read_bh_nowait(struct buffer_head *bh, blk_opf_t op_flags,
@@ -195,7 +195,7 @@ int ext4_read_bh(struct buffer_head *bh, blk_opf_t op_flags, bh_end_io_t *end_io
 		return 0;
 	}
 
-	__ext4_read_bh(bh, op_flags, end_io);
+	__ext4_read_bh(bh, op_flags, end_io); // <
 
 	wait_on_buffer(bh);
 	if (buffer_uptodate(bh))
@@ -210,7 +210,7 @@ int ext4_read_bh_lock(struct buffer_head *bh, blk_opf_t op_flags, bool wait)
 		ext4_read_bh_nowait(bh, op_flags, NULL);
 		return 0;
 	}
-	return ext4_read_bh(bh, op_flags, NULL);
+	return ext4_read_bh(bh, op_flags, NULL); // <
 }
 
 /*
@@ -232,7 +232,7 @@ static struct buffer_head *__ext4_sb_bread_gfp(struct super_block *sb,
 	if (ext4_buffer_uptodate(bh))
 		return bh;
 
-	ret = ext4_read_bh_lock(bh, REQ_META | op_flags, true);
+	ret = ext4_read_bh_lock(bh, REQ_META | op_flags, true); // <
 	if (ret) {
 		put_bh(bh);
 		return ERR_PTR(ret);
@@ -243,7 +243,7 @@ static struct buffer_head *__ext4_sb_bread_gfp(struct super_block *sb,
 struct buffer_head *ext4_sb_bread(struct super_block *sb, sector_t block,
 				   blk_opf_t op_flags)
 {
-	return __ext4_sb_bread_gfp(sb, block, op_flags, __GFP_MOVABLE);
+	return __ext4_sb_bread_gfp(sb, block, op_flags, __GFP_MOVABLE); // <
 }
 
 struct buffer_head *ext4_sb_bread_unmovable(struct super_block *sb,

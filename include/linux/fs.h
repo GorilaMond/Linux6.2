@@ -2223,7 +2223,7 @@ static inline ssize_t call_read_iter(struct file *file, struct kiocb *kio,
 static inline ssize_t call_write_iter(struct file *file, struct kiocb *kio,
 				      struct iov_iter *iter)
 {
-	// ext4中是ext4_file_read_iter
+	// ext4中是ext4_file_write_iter
 	return file->f_op->write_iter(kio, iter);
 }
 
@@ -2922,7 +2922,7 @@ static inline ssize_t generic_write_sync(struct kiocb *iocb, ssize_t count)
 	if (iocb_is_dsync(iocb)) {
 		int ret = vfs_fsync_range(iocb->ki_filp,
 				iocb->ki_pos - count, iocb->ki_pos - 1,
-				(iocb->ki_flags & IOCB_SYNC) ? 0 : 1);
+				(iocb->ki_flags & IOCB_SYNC) ? 0 : 1); // <
 		if (ret)
 			return ret;
 	}

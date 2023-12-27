@@ -832,7 +832,7 @@ struct buffer_head *alloc_page_buffers(struct page *page, unsigned long size,
 	offset = PAGE_SIZE;
 	while ((offset -= size) >= 0) {
 		// 从slab缓存中分配空闲buffer_head结构
-		bh = alloc_buffer_head(gfp); // <
+		bh = alloc_buffer_head(gfp);
 		if (!bh)
 			goto no_grow;
 		// 分配后将各个buffer_head用b_this_page串成链表
@@ -974,7 +974,7 @@ grow_dev_page(struct block_device *bdev, sector_t block,
 	 * Allocate some buffers for this page
 	 */
 	// 找到或新建的页面没有buffer_head，创建新的buffer_head
-	bh = alloc_page_buffers(page, size, true); // <
+	bh = alloc_page_buffers(page, size, true);
 
 	/*
 	 * Link the page to the buffers and initialise them.  Take the
@@ -1188,13 +1188,16 @@ EXPORT_SYMBOL(__bforget);
 static struct buffer_head *__bread_slow(struct buffer_head *bh)
 {
 	lock_buffer(bh);
+	// 如果BH已经跟磁盘内容一致，则不需要发起BIO
 	if (buffer_uptodate(bh)) {
 		unlock_buffer(bh);
 		return bh;
 	} else {
 		get_bh(bh);
+		// 设置回调函数
 		bh->b_end_io = end_buffer_read_sync;
 		submit_bh(REQ_OP_READ, bh);
+		// 等待BH为unlock状态
 		wait_on_buffer(bh);
 		if (buffer_uptodate(bh))
 			return bh;
@@ -1392,6 +1395,7 @@ __bread_gfp(struct block_device *bdev, sector_t block,
 	struct buffer_head *bh = __getblk_gfp(bdev, block, size, gfp);
 
 	if (likely(bh) && !buffer_uptodate(bh))
+		// 同步读函数，会等待buffer_head为unlock状态
 		bh = __bread_slow(bh);
 	return bh;
 }
@@ -1567,8 +1571,10 @@ void create_empty_buffers(struct page *page,
 {
 	struct buffer_head *bh, *head, *tail;
 
+	// 分配buffer_head
 	head = alloc_page_buffers(page, blocksize, true);
 	bh = head;
+	// 建立page下的buffer head为循环链表
 	do {
 		bh->b_state |= b_state;
 		tail = bh;
@@ -1587,6 +1593,7 @@ void create_empty_buffers(struct page *page,
 			bh = bh->b_this_page;
 		} while (bh != head);
 	}
+	// page与buffer_head 关联
 	attach_page_private(page, head);
 	spin_unlock(&page->mapping->private_lock);
 }
@@ -1683,6 +1690,7 @@ static struct buffer_head *create_page_buffers(struct page *page, struct inode *
 {
 	BUG_ON(!PageLocked(page));
 
+	// page没有对应的buffer，创建新的buffer
 	if (!page_has_buffers(page))
 		create_empty_buffers(page, 1 << READ_ONCE(inode->i_blkbits),
 				     b_state);
@@ -1994,15 +2002,18 @@ int __block_write_begin_int(struct folio *folio, loff_t pos, unsigned len,
 	BUG_ON(to > PAGE_SIZE);
 	BUG_ON(from > to);
 
+	// 给page创建buffer head
 	head = create_page_buffers(&folio->page, inode, 0);
 	blocksize = head->b_size;
 	bbits = block_size_bits(blocksize);
 
+	// 文件索引，转换成文件内块号(这个不是磁盘块号)
 	block = (sector_t)folio->index << (PAGE_SHIFT - bbits);
 
 	for(bh = head, block_start = 0; bh != head || !block_start;
 	    block++, block_start=block_end, bh = bh->b_this_page) {
 		block_end = block_start + blocksize;
+		// 如果要写的区间[from,to]没有落到当前的bh范围，直接不处理 
 		if (block_end <= from || block_start >= to) {
 			if (folio_test_uptodate(folio)) {
 				if (!buffer_uptodate(bh))
@@ -2012,6 +2023,7 @@ int __block_write_begin_int(struct folio *folio, loff_t pos, unsigned len,
 		}
 		if (buffer_new(bh))
 			clear_buffer_new(bh);
+		// 给对应的bh分配磁盘空间
 		if (!buffer_mapped(bh)) {
 			WARN_ON(bh->b_size != blocksize);
 			if (get_block) {
@@ -2037,14 +2049,17 @@ int __block_write_begin_int(struct folio *folio, loff_t pos, unsigned len,
 				continue;
 			}
 		}
+		// 待写的page已经与磁盘内容一致,直接不处理
 		if (folio_test_uptodate(folio)) {
 			if (!buffer_uptodate(bh))
 				set_buffer_uptodate(bh);
 			continue; 
 		}
+		// 如果要写得区间[from,to]与磁盘不一致，需要从磁盘读数据
 		if (!buffer_uptodate(bh) && !buffer_delay(bh) &&
 		    !buffer_unwritten(bh) &&
 		     (block_start < from || block_end > to)) {
+			// 更新pagecache内容，如果不更新，会存在数据覆盖
 			bh_read_nowait(bh, 0);
 			*wait_bh++=bh;
 		}
@@ -2052,6 +2067,7 @@ int __block_write_begin_int(struct folio *folio, loff_t pos, unsigned len,
 	/*
 	 * If we issued read requests - let them complete.
 	 */
+	// 等待读完成
 	while(wait_bh > wait) {
 		wait_on_buffer(*--wait_bh);
 		if (!buffer_uptodate(*wait_bh))
@@ -2066,7 +2082,7 @@ int __block_write_begin(struct page *page, loff_t pos, unsigned len,
 		get_block_t *get_block)
 {
 	return __block_write_begin_int(page_folio(page), pos, len, get_block,
-				       NULL);
+				       NULL); // <
 }
 EXPORT_SYMBOL(__block_write_begin);
 
@@ -2089,7 +2105,7 @@ static int __block_commit_write(struct inode *inode, struct page *page,
 				partial = 1;
 		} else {
 			set_buffer_uptodate(bh);
-			mark_buffer_dirty(bh);
+			mark_buffer_dirty(bh); // <
 		}
 		if (buffer_new(bh))
 			clear_buffer_new(bh);
@@ -2168,7 +2184,7 @@ int block_write_end(struct file *file, struct address_space *mapping,
 	flush_dcache_page(page);
 
 	/* This could be a short (even 0-length) commit */
-	__block_commit_write(inode, page, start, start+copied);
+	__block_commit_write(inode, page, start, start+copied); // <
 
 	return copied;
 }
@@ -2275,6 +2291,7 @@ int block_read_full_folio(struct folio *folio, get_block_t *get_block)
 
 	VM_BUG_ON_FOLIO(folio_test_large(folio), folio);
 
+	// 创建buffer_head
 	head = create_page_buffers(&folio->page, inode, 0);
 	blocksize = head->b_size;
 	bbits = block_size_bits(blocksize);
@@ -2295,6 +2312,7 @@ int block_read_full_folio(struct folio *folio, get_block_t *get_block)
 			fully_mapped = 0;
 			if (iblock < lblock) {
 				WARN_ON(bh->b_size != blocksize);
+				// 读取磁盘块到buffer
 				err = get_block(inode, iblock, bh, 0);
 				if (err) {
 					folio_set_error(folio);
@@ -2706,10 +2724,12 @@ static void submit_bh_wbc(blk_opf_t opf, struct buffer_head *bh,
 	if (buffer_prio(bh))
 		opf |= REQ_PRIO;
 
+	// 分配BIO
 	bio = bio_alloc(bh->b_bdev, 1, opf, GFP_NOIO);
 
 	fscrypt_set_bio_crypt_ctx_bh(bio, bh, GFP_NOIO);
 
+	// 逻辑块号转换成扇区号
 	bio->bi_iter.bi_sector = bh->b_blocknr * (bh->b_size >> 9);
 
 	bio_add_page(bio, bh->b_page, bh->b_size, bh_offset(bh));
@@ -2719,6 +2739,7 @@ static void submit_bh_wbc(blk_opf_t opf, struct buffer_head *bh,
 	bio->bi_private = bh;
 
 	/* Take care of bh's that straddle the end of the device */
+	// 对读写进行完全检查
 	guard_bio_eod(bio);
 
 	if (wbc) {
@@ -2726,13 +2747,14 @@ static void submit_bh_wbc(blk_opf_t opf, struct buffer_head *bh,
 		wbc_account_cgroup_owner(wbc, bh->b_page, bh->b_size);
 	}
 
+	// 提交一个bio
 	submit_bio(bio);
 }
 
 // 提交写buffer请求
 void submit_bh(blk_opf_t opf, struct buffer_head *bh)
 {
-	submit_bh_wbc(opf, bh, NULL);
+	submit_bh_wbc(opf, bh, NULL); // <
 }
 EXPORT_SYMBOL(submit_bh);
 
@@ -2834,6 +2856,7 @@ drop_buffers(struct folio *folio, struct buffer_head **buffers_to_free)
 		bh = next;
 	} while (bh != head);
 	*buffers_to_free = head;
+	// 清空page->private的指向
 	folio_detach_private(folio);
 	return true;
 failed:
@@ -2856,7 +2879,7 @@ bool try_to_free_buffers(struct folio *folio)
 	}
 
 	spin_lock(&mapping->private_lock);
-	ret = drop_buffers(folio, &buffers_to_free);
+	ret = drop_buffers(folio, &buffers_to_free); // <
 
 	/*
 	 * If the filesystem writes its buffers by hand (eg ext3)
@@ -2881,7 +2904,7 @@ out:
 
 		do {
 			struct buffer_head *next = bh->b_this_page;
-			free_buffer_head(bh);
+			free_buffer_head(bh); // <
 			bh = next;
 		} while (bh != buffers_to_free);
 	}
@@ -2941,6 +2964,7 @@ EXPORT_SYMBOL(alloc_buffer_head);
 void free_buffer_head(struct buffer_head *bh)
 {
 	BUG_ON(!list_empty(&bh->b_assoc_buffers));
+	// 将buffer_head释放回slab缓存
 	kmem_cache_free(bh_cachep, bh);
 	preempt_disable();
 	__this_cpu_dec(bh_accounting.nr);

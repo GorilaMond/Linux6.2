@@ -506,6 +506,7 @@ unsigned long invalidate_mapping_pagevec(struct address_space *mapping,
 	int i;
 
 	folio_batch_init(&fbatch);
+	// 根据地址空间查询该inode关联的所有page cache
 	while (find_lock_entries(mapping, &index, end, &fbatch, indices)) {
 		for (i = 0; i < folio_batch_count(&fbatch); i++) {
 			struct folio *folio = fbatch.folios[i];
@@ -518,6 +519,7 @@ unsigned long invalidate_mapping_pagevec(struct address_space *mapping,
 				continue;
 			}
 
+			// 尝试释放查询到的page cache页面
 			ret = mapping_evict_folio(mapping, folio);
 			folio_unlock(folio);
 			/*
@@ -525,6 +527,7 @@ unsigned long invalidate_mapping_pagevec(struct address_space *mapping,
 			 * of interest and try to speed up its reclaim.
 			 */
 			if (!ret) {
+				// 把页面从活动LRU链表移动到非活动LRU链表
 				deactivate_file_folio(folio);
 				/* It is likely on the pagevec of a remote CPU */
 				if (nr_pagevec)
@@ -533,6 +536,7 @@ unsigned long invalidate_mapping_pagevec(struct address_space *mapping,
 			count += ret;
 		}
 		folio_batch_remove_exceptionals(&fbatch);
+		// 释放页面
 		folio_batch_release(&fbatch);
 		cond_resched();
 	}
@@ -556,6 +560,7 @@ unsigned long invalidate_mapping_pagevec(struct address_space *mapping,
 unsigned long invalidate_mapping_pages(struct address_space *mapping,
 		pgoff_t start, pgoff_t end)
 {
+	// 根据地址空间查询该inode关联的所有page cache
 	return invalidate_mapping_pagevec(mapping, start, end, NULL);
 }
 EXPORT_SYMBOL(invalidate_mapping_pages);

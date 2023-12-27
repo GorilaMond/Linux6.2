@@ -1374,13 +1374,15 @@ static int __remove_mapping(struct address_space *mapping, struct folio *folio,
 
 		if (reclaimed && !mapping_exiting(mapping))
 			shadow = workingset_eviction(folio, target_memcg);
-		__delete_from_swap_cache(folio, swap, shadow);
+		__delete_from_swap_cache(folio, swap, shadow); // <
 		mem_cgroup_swapout(folio, swap);
 		xa_unlock_irq(&mapping->i_pages);
 		put_swap_folio(folio, swap);
 	} else {
 		void (*free_folio)(struct folio *);
 
+		// 调用对应文件系统的releasepage函数，释放资源，比如buffer_head
+		// 对于ext4调用的是ext4_releasepage
 		free_folio = mapping->a_ops->free_folio;
 		/*
 		 * Remember a shadow entry for reclaimed file cache in
@@ -1401,7 +1403,7 @@ static int __remove_mapping(struct address_space *mapping, struct folio *folio,
 		if (reclaimed && folio_is_file_lru(folio) &&
 		    !mapping_exiting(mapping) && !dax_mapping(mapping))
 			shadow = workingset_eviction(folio, target_memcg);
-		__filemap_remove_folio(folio, shadow);
+		__filemap_remove_folio(folio, shadow); // <
 		xa_unlock_irq(&mapping->i_pages);
 		if (mapping_shrinkable(mapping))
 			inode_add_lru(mapping->host);
@@ -1434,7 +1436,7 @@ cannot_free:
  */
 long remove_mapping(struct address_space *mapping, struct folio *folio)
 {
-	if (__remove_mapping(mapping, folio, false, NULL)) {
+	if (__remove_mapping(mapping, folio, false, NULL)) { // <
 		/*
 		 * Unfreezing the refcount with 1 effectively
 		 * drops the pagecache ref for us without requiring another

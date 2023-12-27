@@ -2034,9 +2034,12 @@ int balance_dirty_pages_ratelimited_flags(struct address_space *mapping,
 	if (!wb)
 		wb = &bdi->wb;
 
-	// 当前task的脏页门限
+	// 当前task的脏页门限。进程task结构的nr_dirtied_pause，
+	// 即进程达到多少脏页时，进程需要执行balance_dirty_pages()进行脏页平衡
 	ratelimit = current->nr_dirtied_pause;
 	// 全局的脏页数超过门限或者该bdi的脏页数超过门限
+	// 如果已经执行balance_dirty_pages()进行脏页平衡，重新计算ratelimit，
+	// 会很小(8)，这样很容易执行下边的balance_dirty_pages()
 	if (wb->dirty_exceeded)
 		ratelimit = min(ratelimit, 32 >> (PAGE_SHIFT - 10));
 
@@ -2047,7 +2050,7 @@ int balance_dirty_pages_ratelimited_flags(struct address_space *mapping,
 	 * 1000+ tasks, all of them start dirtying pages at exactly the same
 	 * time, hence all honoured too large initial task->nr_dirtied_pause.
 	 */
-	// 当前CPU的脏页数
+	// 在标记page脏页时执行account_page_dirtied()令bdp_ratelimits加1，表示当前cpu的脏页数
 	p =  this_cpu_ptr(&bdp_ratelimits);
 	// 如果当前线程脏页数超过门限值，则肯定会触发下面的回收流程。
 	// 同时重新计算当前CPU的脏页数
@@ -2066,11 +2069,14 @@ int balance_dirty_pages_ratelimited_flags(struct address_space *mapping,
 	 * the dirty throttling and livelock other long-run dirtiers.
 	 */
 	// 退出进程遗留脏页数量
+	// 进程退出时把进程残留的脏页数累加到dirty_throttle_leaks这个per cpu变量
 	p = this_cpu_ptr(&dirty_throttle_leaks);
 	if (*p > 0 && current->nr_dirtied < ratelimit) {
+		// 测试时if很少成立，dirty_throttle_leaks基本是0，有时会大于0
 		unsigned long nr_pages_dirtied;
 		nr_pages_dirtied = min(*p, ratelimit - current->nr_dirtied);
 		*p -= nr_pages_dirtied;
+		// 增加当前进程脏页数nr_pages_dirtied
 		current->nr_dirtied += nr_pages_dirtied;
 	}
 	preempt_enable();
@@ -2728,6 +2734,7 @@ static void folio_account_dirtied(struct folio *folio,
 		// 获取inode->i_wb
 		wb = inode_to_wb(inode);
 
+		// 增加脏页NR_FILE_DIRTY
 		__lruvec_stat_mod_folio(folio, NR_FILE_DIRTY, nr);
 		__zone_stat_mod_folio(folio, NR_ZONE_WRITE_PENDING, nr);
 		__node_stat_mod_folio(folio, NR_DIRTIED, nr);

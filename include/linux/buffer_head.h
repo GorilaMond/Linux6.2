@@ -19,11 +19,15 @@
 #ifdef CONFIG_BLOCK
 
 enum bh_state_bits {
+	// 表示BH的数据是最新的，甚至比磁盘还新(uptodate|dirtry)
 	BH_Uptodate,	/* Contains valid data */
+	// BH数据是脏的，需要回刷到磁盘块
 	BH_Dirty,	/* Is dirty */
+	// BH正在进行IO操作
 	BH_Lock,	/* Is locked */
 	BH_Req,		/* Has been submitted for I/O */
 
+	//  BH建立了磁盘映射
 	BH_Mapped,	/* Has a disk mapping */
 	BH_New,		/* Disk mapping was newly created by get_block */
 	BH_Async_Read,	/* Is under end_buffer_async_read I/O */

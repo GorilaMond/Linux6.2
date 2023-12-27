@@ -68,7 +68,7 @@ static inline unsigned pagevec_add(struct pagevec *pvec, struct page *page)
 static inline void pagevec_release(struct pagevec *pvec)
 {
 	if (pagevec_count(pvec))
-		__pagevec_release(pvec);
+		__pagevec_release(pvec); // <
 }
 
 /**
@@ -132,7 +132,7 @@ static inline unsigned folio_batch_add(struct folio_batch *fbatch,
 
 static inline void folio_batch_release(struct folio_batch *fbatch)
 {
-	pagevec_release((struct pagevec *)fbatch);
+	pagevec_release((struct pagevec *)fbatch); // <
 }
 
 void folio_batch_remove_exceptionals(struct folio_batch *fbatch);

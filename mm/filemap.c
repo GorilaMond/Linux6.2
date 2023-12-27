@@ -220,6 +220,7 @@ void __filemap_remove_folio(struct folio *folio, void *shadow)
 
 	trace_mm_filemap_delete_from_page_cache(folio);
 	filemap_unaccount_folio(mapping, folio);
+	// 将该页面从page cache的基树中删除
 	page_cache_delete(mapping, folio, shadow);
 }
 
@@ -385,6 +386,7 @@ int filemap_fdatawrite_wbc(struct address_space *mapping,
 		return 0;
 
 	wbc_attach_fdatawrite_inode(wbc, mapping->host);
+	// 将脏页回写到文件中
 	ret = do_writepages(mapping, wbc);
 	wbc_detach_inode(wbc);
 	return ret;
@@ -418,7 +420,7 @@ int __filemap_fdatawrite_range(struct address_space *mapping, loff_t start,
 		.range_end = end,
 	};
 
-	return filemap_fdatawrite_wbc(mapping, &wbc);
+	return filemap_fdatawrite_wbc(mapping, &wbc); // <
 }
 
 static inline int __filemap_fdatawrite(struct address_space *mapping,
@@ -511,13 +513,14 @@ static void __filemap_fdatawait_range(struct address_space *mapping,
 		unsigned i;
 
 		nr_pages = pagevec_lookup_range_tag(&pvec, mapping, &index,
-				end, PAGECACHE_TAG_WRITEBACK);
+				end, PAGECACHE_TAG_WRITEBACK); // <
 		if (!nr_pages)
 			break;
 
 		for (i = 0; i < nr_pages; i++) {
 			struct page *page = pvec.pages[i];
 
+			// 等待回写完成
 			wait_on_page_writeback(page);
 			ClearPageError(page);
 		}
@@ -671,6 +674,7 @@ int filemap_write_and_wait_range(struct address_space *mapping,
 		return 0;
 
 	if (mapping_needs_writeback(mapping)) {
+		// 回写
 		err = __filemap_fdatawrite_range(mapping, lstart, lend,
 						 WB_SYNC_ALL);
 		/*
@@ -680,6 +684,7 @@ int filemap_write_and_wait_range(struct address_space *mapping,
 		 * thing (e.g. bug) happened, so we avoid waiting for it.
 		 */
 		if (err != -EIO)
+			// 等待回写完成
 			__filemap_fdatawait_range(mapping, lstart, lend);
 	}
 	err2 = filemap_check_errors(mapping);
@@ -861,6 +866,7 @@ noinline int __filemap_add_folio(struct address_space *mapping,
 
 	gfp &= GFP_RECLAIM_MASK;
 	folio_ref_add(folio, nr);
+	// 设置folio的地址空间及偏移地址
 	folio->mapping = mapping;
 	folio->index = xas.xa_index;
 
@@ -893,7 +899,7 @@ noinline int __filemap_add_folio(struct address_space *mapping,
 			}
 		}
 
-		// 并将其加入page cache和LRU链表
+		// 并将其加入page cache
 		xas_store(&xas, folio);
 		if (xas_error(&xas))
 			goto unlock;
@@ -933,7 +939,8 @@ int filemap_add_folio(struct address_space *mapping, struct folio *folio,
 	int ret;
 
 	__folio_set_locked(folio);
-	ret = __filemap_add_folio(mapping, folio, index, gfp, &shadow);
+	// 加入pagecache中
+	ret = __filemap_add_folio(mapping, folio, index, gfp, &shadow); // <
 	if (unlikely(ret))
 		__folio_clear_locked(folio);
 	else {
@@ -947,7 +954,8 @@ int filemap_add_folio(struct address_space *mapping, struct folio *folio,
 		 */
 		WARN_ON_ONCE(folio_test_active(folio));
 		if (!(gfp & __GFP_WRITE) && shadow)
-			workingset_refault(folio, shadow);
+			workingset_refault(folio, shadow); // <
+		// 加入LRU链表
 		folio_add_lru(folio);
 	}
 	return ret;
@@ -1914,6 +1922,7 @@ struct folio *__filemap_get_folio(struct address_space *mapping, pgoff_t index,
 	struct folio *folio;
 
 repeat:
+	// 查找page cache
 	folio = mapping_get_entry(mapping, index);
 	if (xa_is_value(folio)) {
 		if (fgp_flags & FGP_ENTRY)
@@ -2393,7 +2402,7 @@ static void filemap_get_read_batch(struct address_space *mapping,
 		if (unlikely(folio != xas_reload(&xas)))
 			goto put_folio;
 
-		if (!folio_batch_add(fbatch, folio))
+		if (!folio_batch_add(fbatch, folio)) // <
 			break;
 		if (!folio_test_uptodate(folio))
 			break;
@@ -2426,6 +2435,7 @@ static int filemap_read_folio(struct file *file, filler_t filler,
 	/* Start the actual read. The read will unlock the page. */
 	if (unlikely(workingset))
 		psi_memstall_enter(&pflags);
+	// 调用文件系统读取页面函数将数据填充到folio
 	error = filler(file, folio);
 	if (unlikely(workingset))
 		psi_memstall_leave(&pflags);
@@ -2549,7 +2559,7 @@ static int filemap_create_folio(struct file *file,
 	 * well to keep locking rules simple.
 	 */
 	filemap_invalidate_lock_shared(mapping);
-	// 将其加入page cache和LRU链表
+	// 将folio加入page cache和LRU链表
 	error = filemap_add_folio(mapping, folio, index,
 			mapping_gfp_constraint(mapping, GFP_KERNEL));
 	if (error == -EEXIST)
@@ -2557,12 +2567,13 @@ static int filemap_create_folio(struct file *file,
 	if (error)
 		goto error;
 	
-	// 调用对应的readpage函数，从磁盘中读入文件数据
+	// 调用对应的read_folio函数，从磁盘中读入文件数据到folio，ext4系统中是ext4_read_folio
 	error = filemap_read_folio(file, mapping->a_ops->read_folio, folio);
 	if (error)
 		goto error;
 
 	filemap_invalidate_unlock_shared(mapping);
+	// 将folio添加进batch
 	folio_batch_add(fbatch, folio);
 	return 0;
 error:
@@ -2579,6 +2590,7 @@ static int filemap_readahead(struct kiocb *iocb, struct file *file,
 
 	if (iocb->ki_flags & IOCB_NOIO)
 		return -EAGAIN;
+	// 异步预读
 	page_cache_async_ra(&ractl, folio, last_index - folio->index);
 	return 0;
 }
@@ -2604,13 +2616,17 @@ retry:
 	if (!folio_batch_count(fbatch)) {
 		if (iocb->ki_flags & IOCB_NOIO)
 			return -EAGAIN;
+		// 如果没有查找到pagecache，则尝试从 file 进行同步预读数据到 address_space->xarray 中
 		page_cache_sync_readahead(mapping, ra, filp, index,
 				last_index - index);
+		// 预读后，再次查找
 		filemap_get_read_batch(mapping, index, last_index - 1, fbatch);
 	}
 	if (!folio_batch_count(fbatch)) {
 		if (iocb->ki_flags & (IOCB_NOWAIT | IOCB_WAITQ))
 			return -EAGAIN;
+		// 如果没有查找到pagecache，则直接申请一个 folio，添加到 address_space->xarray 中，
+		// 并且 从 file 读取对应的数据到 folio 中，同时将 folio 加入到对应的 LRU 链表中
 		err = filemap_create_folio(filp, mapping,
 				iocb->ki_pos >> PAGE_SHIFT, fbatch);
 		if (err == AOP_TRUNCATED_PAGE)
@@ -2620,6 +2636,8 @@ retry:
 
 	folio = fbatch->folios[folio_batch_count(fbatch) - 1];
 	if (folio_test_readahead(folio)) {
+		// 如果找到的 pagecache 有 readahead 标志，代表此页是之前通过预读操作读到的数据， 
+		// 于是调用 filemap_readahead() 继续启动异步预读文件内容到 pagecache 中。
 		err = filemap_readahead(iocb, filp, mapping, folio, last_index);
 		if (err)
 			goto err;
@@ -2698,6 +2716,7 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
 		if (unlikely(iocb->ki_pos >= i_size_read(inode)))
 			break;
 
+		// 从 address_space->xarray 查找合适的 pagecache，并且保存在 fbatch 中
 		error = filemap_get_pages(iocb, iter, &fbatch);
 		if (error < 0)
 			break;
@@ -2727,6 +2746,8 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
 		 */
 		if (!pos_same_folio(iocb->ki_pos, ra->prev_pos - 1,
 							fbatch.folios[0]))
+			// 设置每一个 folio 的 referenced/active 属性， 
+			// 在必要时将 folio 从 LRU inactive list 移动到 LRU active list 中
 			folio_mark_accessed(fbatch.folios[0]);
 
 		for (i = 0; i < folio_batch_count(&fbatch); i++) {
@@ -2749,6 +2770,7 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
 			if (writably_mapped)
 				flush_dcache_folio(folio);
 
+			// 将 fbatch 中每一个 folio 的内容复制到用户空间 buffer 中
 			copied = copy_folio_to_iter(folio, offset, bytes, iter);
 
 			already_read += copied;
@@ -2766,6 +2788,7 @@ put_folios:
 		folio_batch_init(&fbatch);
 	} while (iov_iter_count(iter) && iocb->ki_pos < isize && !error);
 
+	// 修改文件访问时间
 	file_accessed(filp);
 
 	return already_read ? already_read : error;
@@ -2802,6 +2825,7 @@ generic_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 	if (!count)
 		return 0; /* skip atime */
 
+	// 若从 file 直接读取数据
 	if (iocb->ki_flags & IOCB_DIRECT) {
 		struct file *file = iocb->ki_filp;
 		struct address_space *mapping = file->f_mapping;
@@ -2812,6 +2836,7 @@ generic_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 						iocb->ki_pos + count - 1))
 				return -EAGAIN;
 		} else {
+			// 先调用 do_writepages() 将脏页回写到文件中，然后 调用 folio_wait_writeback() 等待回写完成
 			retval = filemap_write_and_wait_range(mapping,
 						iocb->ki_pos,
 					        iocb->ki_pos + count - 1);
@@ -2844,6 +2869,7 @@ generic_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 			return retval;
 	}
 
+	// 若从 pagecache 复制数据到用户空间 buffer
 	return filemap_read(iocb, iter, retval);
 }
 EXPORT_SYMBOL(generic_file_read_iter);
@@ -3779,7 +3805,8 @@ again:
 
 		// 写入前的处理，由底层文件系统实现，主要处理需要申请的额外存储空间，
 		// 以及从后端存储（磁盘或网络）读取不在缓存中的page数据。返回locked的page到page
-		// 例如 ext4_da_write_begin
+		// 建立page，BH,磁盘块的映射关系
+		// 例如 ext4_da_write_begin、ext4_write_begin
 		status = a_ops->write_begin(file, mapping, pos, bytes,
 						&page, &fsdata);
 		if (unlikely(status < 0))
@@ -3788,12 +3815,13 @@ again:
 		if (mapping_writably_mapped(mapping))
 			flush_dcache_page(page);
 
-		// 从用户空间拷贝数据到返回的page里
+		// 复制用户数据到page，从用户空间拷贝数据到返回的page里
 		copied = copy_page_from_iter_atomic(page, offset, bytes, i);
 		flush_dcache_page(page);
 
 		// 通过调用底层文件系统的实现，将page设置为dirty并unlock
-		// 例如 ext4_da_write_end
+		// 等待异步IO完成
+		// 例如 ext4_da_write_end、ext4_write_end
 		status = a_ops->write_end(file, mapping, pos, bytes, copied,
 						page, fsdata);
 		if (unlikely(status != copied)) {
@@ -3968,10 +3996,12 @@ ssize_t generic_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	inode_lock(inode);
 	ret = generic_write_checks(iocb, from);
 	if (ret > 0)
-		ret = __generic_file_write_iter(iocb, from);
+		// 实际的数据被写入 page cache
+		ret = __generic_file_write_iter(iocb, from); // <
 	inode_unlock(inode);
 
 	if (ret > 0)
+		// 将刚刚写入 page cache 的数据通过 vfs_fsync_range 下刷到底层设备上
 		ret = generic_write_sync(iocb, ret);
 	return ret;
 }

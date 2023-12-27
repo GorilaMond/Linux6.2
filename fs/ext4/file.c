@@ -704,7 +704,7 @@ ext4_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		// 写穿
 		return ext4_dio_write_iter(iocb, from);
 	else
-		// 延迟写
+		// 写回、延迟写
 		return ext4_buffered_write_iter(iocb, from);
 }
 

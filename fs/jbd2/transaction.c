@@ -2185,7 +2185,7 @@ bool jbd2_journal_try_to_free_buffers(journal_t *journal, struct folio *folio)
 			goto busy;
 	} while ((bh = bh->b_this_page) != head);
 
-	ret = try_to_free_buffers(folio);
+	ret = try_to_free_buffers(folio); // <
 busy:
 	return ret;
 }

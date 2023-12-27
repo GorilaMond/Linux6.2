@@ -94,14 +94,19 @@ static void sync_fs_one_sb(struct super_block *sb, void *arg)
  * just write metadata (such as inodes or bitmaps) to block device page cache
  * and do not sync it on their own in ->sync_fs().
  */
+// 同步所有的 page cache
 void ksys_sync(void)
 {
 	int nowait = 0, wait = 1;
 
+	// 唤醒所有 bdi 的回写线程
 	wakeup_flusher_threads(WB_REASON_SYNC);
+	// 下发所有 inode 的回写任务
 	iterate_supers(sync_inodes_one_sb, NULL);
+	// 调用 sync_fs() 同步文件系统的元数据
 	iterate_supers(sync_fs_one_sb, &nowait);
 	iterate_supers(sync_fs_one_sb, &wait);
+	// 回写块设备的 page cache
 	sync_bdevs(false);
 	sync_bdevs(true);
 	if (unlikely(laptop_mode))
@@ -184,7 +189,8 @@ int vfs_fsync_range(struct file *file, loff_t start, loff_t end, int datasync)
 	if (!file->f_op->fsync)
 		return -EINVAL;
 	if (!datasync && (inode->i_state & I_DIRTY_TIME))
-		mark_inode_dirty_sync(inode);
+		mark_inode_dirty_sync(inode); // <
+	// 调用文件系统注册的函数进行脏页的下刷，ext4_sync_file
 	return file->f_op->fsync(file, start, end, datasync);
 }
 EXPORT_SYMBOL(vfs_fsync_range);
@@ -203,6 +209,7 @@ int vfs_fsync(struct file *file, int datasync)
 }
 EXPORT_SYMBOL(vfs_fsync);
 
+// 可以更加细粒度的下刷脏页，他们的下刷对象是一个文件
 static int do_fsync(unsigned int fd, int datasync)
 {
 	struct fd f = fdget(fd);

@@ -96,7 +96,7 @@ struct page *pagecache_get_page(struct address_space *mapping, pgoff_t index,
 {
 	struct folio *folio;
 
-	folio = __filemap_get_folio(mapping, index, fgp_flags, gfp);
+	folio = __filemap_get_folio(mapping, index, fgp_flags, gfp); // <
 	if (!folio || xa_is_value(folio))
 		return &folio->page;
 	return folio_file_page(folio, index);
@@ -108,6 +108,7 @@ struct page *grab_cache_page_write_begin(struct address_space *mapping,
 {
 	unsigned fgp_flags = FGP_LOCK | FGP_WRITE | FGP_CREAT | FGP_STABLE;
 
+	// 从mapping的radix tree中查找缓存页，假如不存在，则从伙伴系统中申请一个新页插入，并添加到LRU链表中。
 	return pagecache_get_page(mapping, index, fgp_flags,
 			mapping_gfp_mask(mapping));
 }

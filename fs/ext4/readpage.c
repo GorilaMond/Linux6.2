@@ -224,8 +224,11 @@ int ext4_mpage_readpages(struct inode *inode,
 	struct bio *bio = NULL;
 	sector_t last_block_in_bio = 0;
 
+	// 对于扇区大小为512字节的磁盘，该值为9
 	const unsigned blkbits = inode->i_blkbits;
+	// 对于扇区大小为512字节的磁盘，该值为8，即每个页面对应8个磁盘块
 	const unsigned blocks_per_page = PAGE_SIZE >> blkbits;
+	//物理磁盘块大小，即扇区大小，为512字节
 	const unsigned blocksize = 1 << blkbits;
 	sector_t next_block;
 	sector_t block_in_file;
@@ -253,14 +256,19 @@ int ext4_mpage_readpages(struct inode *inode,
 			prefetchw(&page->flags);
 		}
 
+		// 如果page有关联的buffer_head，那继续以块的方式读取
 		if (page_has_buffers(page))
 			goto confused;
 
+		// 当前page在file中的相对block
 		block_in_file = next_block =
 			(sector_t)page->index << (PAGE_SHIFT - blkbits);
+		// 需要读取的最后一个block
 		last_block = block_in_file + nr_pages * blocks_per_page;
+		// 该文件的最后一个block
 		last_block_in_file = (ext4_readpage_limit(inode) +
 				      blocksize - 1) >> blkbits;
+		// 读取的block不能超过文件最后一个block
 		if (last_block > last_block_in_file)
 			last_block = last_block_in_file;
 		page_block = 0;
@@ -293,11 +301,14 @@ int ext4_mpage_readpages(struct inode *inode,
 		 * Then do more ext4_map_blocks() calls until we are
 		 * done with this page.
 		 */
+		// 调用ext4_map_blocks查找该页需要的所有磁盘块
 		while (page_block < blocks_per_page) {
 			if (block_in_file < last_block) {
 				map.m_lblk = block_in_file;
+				// 读取长度
 				map.m_len = last_block - block_in_file;
 
+				// 从磁盘查找块
 				if (ext4_map_blocks(NULL, inode, &map, 0) < 0) {
 				set_error_page:
 					SetPageError(page);
@@ -319,6 +330,8 @@ int ext4_mpage_readpages(struct inode *inode,
 				goto confused;		/* hole -> non-hole */
 
 			/* Contiguous blocks? */
+			// 两次读取的block是否相邻，不相邻则通过一次读一块的方式读取
+			// 但是对于4k盘，即物理块扇区大小为4k，和page大小一致时，就不存在是否相邻的问题，因为一个页就对应一个block
 			if (page_block && blocks[page_block-1] != map.m_pblk-1)
 				goto confused;
 			for (relative_block = 0; ; relative_block++) {
@@ -392,6 +405,7 @@ int ext4_mpage_readpages(struct inode *inode,
 			bio = NULL;
 		}
 		if (!PageUptodate(page))
+			// 通过buffer_head，一次一块读取文件
 			block_read_full_folio(page_folio(page), ext4_get_block);
 		else
 			unlock_page(page);

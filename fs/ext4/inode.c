@@ -809,6 +809,7 @@ static int _ext4_get_block(struct inode *inode, sector_t iblock,
 	ret = ext4_map_blocks(ext4_journal_current_handle(), inode, &map,
 			      flags);
 	if (ret > 0) {
+		// 建立buffer_head与磁盘块的映射
 		map_bh(bh, inode->i_sb, map.m_pblk);
 		ext4_update_bh_state(bh, map.m_flags);
 		bh->b_size = inode->i_sb->s_blocksize * map.m_len;
@@ -824,7 +825,7 @@ int ext4_get_block(struct inode *inode, sector_t iblock,
 		   struct buffer_head *bh, int create)
 {
 	return _ext4_get_block(inode, iblock, bh,
-			       create ? EXT4_GET_BLOCKS_CREATE : 0);
+			       create ? EXT4_GET_BLOCKS_CREATE : 0); // <
 }
 
 /*
@@ -1192,6 +1193,7 @@ static int ext4_write_begin(struct file *file, struct address_space *mapping,
 	 * the page (if needed) without using GFP_NOFS.
 	 */
 retry_grab:
+	// 分配page cache，获取一个缓存页或者创建一个缓存页
 	page = grab_cache_page_write_begin(mapping, index);
 	if (!page)
 		return -ENOMEM;
@@ -1232,8 +1234,9 @@ retry_journal:
 #else
 	if (ext4_should_dioread_nolock(inode))
 		ret = __block_write_begin(page, pos, len,
-					  ext4_get_block_unwritten);
+					  ext4_get_block_unwritten); // <
 	else
+		// 建立page cache与Buffer Head和磁盘块的联系，ext4_get_blok会分配实际的磁盘空间
 		ret = __block_write_begin(page, pos, len, ext4_get_block);
 #endif
 	if (!ret && ext4_should_journal_data(inode)) {
@@ -1320,7 +1323,7 @@ static int ext4_write_end(struct file *file,
 	    ext4_test_inode_state(inode, EXT4_STATE_MAY_INLINE_DATA))
 		return ext4_write_inline_data_end(inode, pos, len, copied, page);
 
-	copied = block_write_end(file, mapping, pos, len, copied, page, fsdata);
+	copied = block_write_end(file, mapping, pos, len, copied, page, fsdata); // <
 	/*
 	 * it's important to update i_size while still holding page lock:
 	 * page writeout could otherwise come in and zero beyond i_size.
@@ -1329,6 +1332,7 @@ static int ext4_write_end(struct file *file,
 	 * blocks are being written past EOF, so skip the i_size update.
 	 */
 	if (!verity)
+		// 更新文件对应的inode信息
 		i_size_changed = ext4_update_inode_size(inode, pos + copied);
 	unlock_page(page);
 	put_page(page);
@@ -1342,6 +1346,7 @@ static int ext4_write_end(struct file *file,
 	 * filesystems.
 	 */
 	if (i_size_changed)
+		// 标记inode为脏，写入了数据，需要同步到磁盘
 		ret = ext4_mark_inode_dirty(handle, inode);
 
 	if (pos + len > inode->i_size && !verity && ext4_can_truncate(inode))
@@ -3339,6 +3344,7 @@ out:
 	return ret;
 }
 
+// 如果page cache没有缓存，会调用readpage去磁盘读取数据，对于ext4调用的就是该函数
 static int ext4_read_folio(struct file *file, struct folio *folio)
 {
 	struct page *page = &folio->page;
@@ -3351,7 +3357,7 @@ static int ext4_read_folio(struct file *file, struct folio *folio)
 		ret = ext4_readpage_inline(inode, page);
 
 	if (ret == -EAGAIN)
-		return ext4_mpage_readpages(inode, NULL, page);
+		return ext4_mpage_readpages(inode, NULL, page); // <
 
 	return ret;
 }
@@ -3402,6 +3408,7 @@ static void ext4_journalled_invalidate_folio(struct folio *folio,
 	WARN_ON(__ext4_journalled_invalidate_folio(folio, offset, length) < 0);
 }
 
+// 对资源进行释放，回收page cache 和 buffer_head
 static bool ext4_release_folio(struct folio *folio, gfp_t wait)
 {
 	journal_t *journal = EXT4_JOURNAL(folio->mapping->host);
@@ -3412,7 +3419,7 @@ static bool ext4_release_folio(struct folio *folio, gfp_t wait)
 	if (folio_test_checked(folio))
 		return false;
 	if (journal)
-		return jbd2_journal_try_to_free_buffers(journal, folio);
+		return jbd2_journal_try_to_free_buffers(journal, folio); // <
 	else
 		return try_to_free_buffers(folio);
 }
